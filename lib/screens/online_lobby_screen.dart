@@ -29,6 +29,7 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
   GameRoom? _currentRoom;
   StreamSubscription<GameRoom?>? _roomSubscription;
   bool _isLoading = false;
+  bool _isManuallyLeaving = false; // لتتبع ما إذا كان المستخدم يغادر بشكل يدوي
 
   @override
   void initState() {
@@ -48,12 +49,48 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
         .listen(
           (room) {
             if (mounted) {
+              // إذا لم تعد الغرفة موجودة ولم يكن المستخدم يغادر يدوياً
+              if (room == null && !_isManuallyLeaving) {
+                print('🏠 الغرفة تم حذفها تلقائياً - العودة للشاشة الرئيسية');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('تم حذف الغرفة - جميع اللاعبين غادروا'),
+                    backgroundColor: Colors.orange,
+                    duration: Duration(seconds: 3),
+                  ),
+                );
+                Navigator.of(context).popUntil((route) => route.isFirst);
+                return;
+              }
+
+              // إذا كان المستخدم يغادر يدوياً ولم تعد الغرفة موجودة، لا نفعل شيئاً
+              if (room == null && _isManuallyLeaving) {
+                print(
+                  '👤 الغرفة محذوفة والمستخدم يغادر يدوياً - لا إجراء مطلوب',
+                );
+                return;
+              }
+
               setState(() {
                 _currentRoom = room;
               });
 
+              // التحقق من أن الغرفة لا تزال تحتوي على لاعبين (فقط إذا لم يكن المستخدم يغادر يدوياً)
+              if (room != null && room.players.isEmpty && !_isManuallyLeaving) {
+                print('👥 الغرفة فارغة تلقائياً - العودة للشاشة الرئيسية');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('جميع اللاعبين غادروا الغرفة'),
+                    backgroundColor: Colors.orange,
+                    duration: Duration(seconds: 3),
+                  ),
+                );
+                Navigator.of(context).popUntil((route) => route.isFirst);
+                return;
+              }
+
               // إذا بدأت اللعبة، انتقل لشاشة الأسئلة
-              if (room?.state == GameState.inProgress) {
+              if (room != null && room.state == GameState.inProgress) {
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(
@@ -69,6 +106,7 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
           },
           onError: (error) {
             if (mounted) {
+              print('❌ خطأ في مراقبة الغرفة: $error');
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('خطأ في الاتصال: $error'),
@@ -129,32 +167,60 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
   }
 
   void _leaveRoom() async {
+    // العلم تم تعيينه مسبقاً في الكود الذي يستدعي هذه الدالة
     try {
+      print('🚪 بدء مغادرة الغرفة من واجهة المستخدم...');
       await _firebaseService.leaveRoom(widget.roomCode);
+      print('✅ تم ترك الغرفة بنجاح');
     } catch (e) {
-      // تجاهل الأخطاء عند المغادرة
-    }
-    if (mounted) {
-      Navigator.pop(context);
+      print('⚠️ خطأ أثناء مغادرة الغرفة: $e');
+      // عرض رسالة خطأ للمستخدم
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('حدث خطأ أثناء مغادرة الغرفة: $e'),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } finally {
+      // العودة للصفحة السابقة (شاشة الانضمام) بدلاً من الصفحة الرئيسية
+      if (mounted) {
+        Navigator.pop(context);
+      }
     }
   }
 
   void _goBackToSettings() async {
-    // إذا كان المضيف، اذهب لصفحة الإعدادات بدلاً من مغادرة الغرفة
+    // العلم تم تعيينه مسبقاً في PopScope أو عند الاستدعاء المباشر
     try {
+      print('🔙 العودة للإعدادات - مغادرة الغرفة أولاً...');
       await _firebaseService.leaveRoom(widget.roomCode);
+      print('✅ تم ترك الغرفة بنجاح');
     } catch (e) {
-      // تجاهل الأخطاء عند المغادرة
-    }
-
-    if (mounted) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder:
-              (context) => RoomSettingsScreen(playerName: widget.playerName),
-        ),
-      );
+      print('⚠️ خطأ أثناء مغادرة الغرفة: $e');
+      // عرض رسالة خطأ للمستخدم
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('حدث خطأ أثناء مغادرة الغرفة: $e'),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } finally {
+      // الانتقال للإعدادات حتى لو حدث خطأ
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder:
+                (context) => RoomSettingsScreen(playerName: widget.playerName),
+          ),
+        );
+      }
     }
   }
 
@@ -165,16 +231,40 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
     final maxPlayers = _currentRoom?.maxPlayers ?? 4;
 
     return PopScope(
-      onPopInvoked: (didPop) {
-        if (didPop) {
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (!didPop) {
+          // تنفيذ مغادرة الغرفة أولاً ثم السماح بالعودة
           if (widget.isHost) {
+            _isManuallyLeaving = true; // تعيين العلم قبل مغادرة الغرفة
             _goBackToSettings();
           } else {
-            _leaveRoom();
+            // للاعبين العاديين: مغادرة الغرفة والعودة للصفحة السابقة
+            _isManuallyLeaving = true; // تعيين العلم قبل مغادرة الغرفة
+            try {
+              print('🚪 مغادرة الغرفة عبر زر الرجوع...');
+              await _firebaseService.leaveRoom(widget.roomCode);
+              print('✅ تم ترك الغرفة بنجاح');
+            } catch (e) {
+              print('⚠️ خطأ أثناء مغادرة الغرفة: $e');
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('حدث خطأ أثناء مغادرة الغرفة: $e'),
+                    backgroundColor: Colors.orange,
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              }
+            } finally {
+              // العودة للصفحة السابقة
+              if (mounted) {
+                Navigator.pop(context);
+              }
+            }
           }
         }
       },
-      canPop: false,
       child: Scaffold(
         backgroundColor: Colors.deepPurple.shade50,
         appBar: AppBar(
@@ -191,7 +281,14 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
           elevation: 0,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back, color: Colors.white),
-            onPressed: widget.isHost ? _goBackToSettings : _leaveRoom,
+            onPressed: () {
+              _isManuallyLeaving = true; // تعيين العلم قبل مغادرة الغرفة
+              if (widget.isHost) {
+                _goBackToSettings();
+              } else {
+                _leaveRoom();
+              }
+            },
             tooltip: widget.isHost ? 'العودة للإعدادات' : 'مغادرة الغرفة',
           ),
           actions: [
@@ -436,7 +533,11 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
 
                             // Leave room button
                             OutlinedButton(
-                              onPressed: _leaveRoom,
+                              onPressed: () {
+                                _isManuallyLeaving =
+                                    true; // تعيين العلم قبل مغادرة الغرفة
+                                _leaveRoom();
+                              },
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: Colors.red,
                                 side: const BorderSide(

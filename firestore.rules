@@ -1,9 +1,19 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // قواعد للعبة التحدي والمخاطرة - مفتوحة للاختبار
+    // قواعد للعبة التحدي والمخاطرة
     match /game_rooms/{roomId} {
-      // السماح بالقراءة والكتابة للجميع (للاختبار)
+      // السماح بالقراءة والكتابة للجميع (مؤقتاً للاختبار)
+      allow read, write: if true;
+      
+      // قواعد للوثائق الفرعية
+      match /{document=**} {
+        allow read, write: if true;
+      }
+    }
+    
+    // السماح بالعمليات الأساسية
+    match /{document=**} {
       allow read, write: if true;
     }
   }

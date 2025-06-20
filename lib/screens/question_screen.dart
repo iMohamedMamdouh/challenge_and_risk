@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../models/player.dart';
 import '../models/question.dart';
+import '../services/audio_service.dart';
 import '../widgets/question_card.dart';
 import 'challenge_screen.dart';
 import 'result_screen.dart';
@@ -27,6 +28,7 @@ class QuestionScreen extends StatefulWidget {
 }
 
 class _QuestionScreenState extends State<QuestionScreen> {
+  final AudioService _audioService = AudioService();
   List<Question> _questions = [];
   int _currentQuestionIndex = 0;
   int _currentPlayerIndex = 0;
@@ -45,8 +47,15 @@ class _QuestionScreenState extends State<QuestionScreen> {
     super.initState();
     _totalQuestions =
         widget.questionsCount ?? 10; // استخدام العدد المُمرر أو 10 كافتراضي
+    _initializeAudio();
     _loadQuestions();
     _initializeRound(); // تهيئة الجولة الأولى
+  }
+
+  Future<void> _initializeAudio() async {
+    await _audioService.initialize();
+    // إيقاف موسيقى القائمة الرئيسية عند بدء الأسئلة
+    await _audioService.stopMusic();
   }
 
   Future<void> _loadQuestions() async {
@@ -104,10 +113,12 @@ class _QuestionScreenState extends State<QuestionScreen> {
 
     if (isCorrect) {
       // إجابة صحيحة - إضافة نقطة وتشغيل صوت النجاح
+      _audioService.playCorrectAnswer();
       currentPlayer.addPoint();
       _showCorrectAnswer();
     } else {
       // إجابة خاطئة - تشغيل صوت الخطأ وإظهار التحدي
+      _audioService.playWrongAnswer();
       _showChallenge();
     }
   }

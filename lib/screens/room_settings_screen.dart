@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 
 import '../models/question.dart';
 import '../services/firebase_service.dart';
+import '../utils/join_room_test.dart';
+import '../utils/quick_join_test.dart';
 import 'online_lobby_screen.dart';
 
 class RoomSettingsScreen extends StatefulWidget {
@@ -114,6 +116,106 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
         duration: Duration(seconds: 2),
       ),
     );
+  }
+
+  void _testJoinRoom() async {
+    // إظهار نافذة إدخال بيانات الاختبار
+    await showDialog(
+      context: context,
+      builder: (context) => _JoinRoomTestDialog(),
+    );
+  }
+
+  void _listAvailableRooms() async {
+    setState(() => isLoading = true);
+
+    try {
+      final result = await JoinRoomTest.listAvailableRooms();
+
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => _AvailableRoomsDialog(result: result),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => isLoading = false);
+      }
+    }
+  }
+
+  void _createTestRoom() async {
+    setState(() => isLoading = true);
+
+    try {
+      final roomCode = await JoinRoomTest.createTestRoom();
+
+      if (mounted) {
+        if (roomCode != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✅ تم إنشاء غرفة تجريبية: $roomCode'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 5),
+              action: SnackBarAction(
+                label: 'نسخ',
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: roomCode));
+                },
+              ),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('❌ فشل في إنشاء غرفة تجريبية'),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() => isLoading = false);
+      }
+    }
+  }
+
+  void _runFullTest() async {
+    setState(() => isLoading = true);
+
+    try {
+      // تشغيل الاختبار الشامل في الخلفية وإظهار النتائج
+      await QuickJoinTest.fullTest();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              '✅ تم تشغيل الاختبار الشامل - تحقق من وحدة التحكم للتفاصيل',
+            ),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ فشل الاختبار الشامل: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => isLoading = false);
+      }
+    }
   }
 
   void _toggleCategory(String categoryName) {
@@ -400,6 +502,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
                           ),
                           const SizedBox(height: 15),
                           Wrap(
+                            runSpacing: 8,
                             spacing: 8,
                             children:
                                 _maxPlayersOptions.map((players) {
@@ -410,6 +513,60 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
                                     isSelected,
                                   );
                                 }).toList(),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 30),
+
+                    // Test Buttons Section
+                    _buildSectionCard(
+                      title: 'أدوات الاختبار',
+                      icon: Icons.bug_report,
+                      child: Column(
+                        children: [
+                          const Text(
+                            'أدوات لاختبار وظائف الانضمام للغرف',
+                            style: TextStyle(fontSize: 14, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 15),
+                          Wrap(
+                            runSpacing: 8,
+                            spacing: 8,
+                            children: [
+                              // Test Join Room Button
+                              _buildTestButton(
+                                icon: Icons.login,
+                                label: 'اختبار الانضمام',
+                                color: Colors.purple,
+                                onPressed: _testJoinRoom,
+                              ),
+
+                              // List Available Rooms Button
+                              _buildTestButton(
+                                icon: Icons.list,
+                                label: 'عرض الغرف',
+                                color: Colors.orange,
+                                onPressed: _listAvailableRooms,
+                              ),
+
+                              // Create Test Room Button
+                              _buildTestButton(
+                                icon: Icons.science,
+                                label: 'غرفة تجريبية',
+                                color: Colors.teal,
+                                onPressed: _createTestRoom,
+                              ),
+
+                              // Full Test Button
+                              _buildTestButton(
+                                icon: Icons.play_circle,
+                                label: 'اختبار شامل',
+                                color: Colors.indigo,
+                                onPressed: _runFullTest,
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -840,6 +997,329 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTestButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    return SizedBox(
+      width: 140,
+      height: 80,
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Color.lerp(color, Colors.white, 0.2)!,
+              Color.lerp(color, Colors.black, 0.2)!,
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: color.withOpacity(0.3),
+              spreadRadius: 1,
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: isLoading ? null : onPressed,
+            borderRadius: BorderRadius.circular(12),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: Colors.white, size: 24),
+                const SizedBox(height: 6),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// نوافذ الاختبار
+class _JoinRoomTestDialog extends StatefulWidget {
+  @override
+  State<_JoinRoomTestDialog> createState() => _JoinRoomTestDialogState();
+}
+
+class _JoinRoomTestDialogState extends State<_JoinRoomTestDialog> {
+  final _roomCodeController = TextEditingController();
+  final _playerNameController = TextEditingController();
+  bool _isLoading = false;
+
+  @override
+  void dispose() {
+    _roomCodeController.dispose();
+    _playerNameController.dispose();
+    super.dispose();
+  }
+
+  void _runTest() async {
+    if (_roomCodeController.text.trim().isEmpty ||
+        _playerNameController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('يرجى إدخال جميع البيانات'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final result = await JoinRoomTest.testJoinRoom(
+        _roomCodeController.text.trim(),
+        _playerNameController.text.trim(),
+      );
+
+      if (mounted) {
+        Navigator.pop(context);
+        showDialog(
+          context: context,
+          builder: (context) => _TestResultDialog(result: result),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Row(
+        children: [
+          Icon(Icons.science, color: Colors.purple),
+          SizedBox(width: 10),
+          Text('اختبار الانضمام للغرفة'),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _roomCodeController,
+            decoration: const InputDecoration(
+              labelText: 'كود الغرفة',
+              hintText: '123456',
+              border: OutlineInputBorder(),
+            ),
+            textAlign: TextAlign.center,
+            maxLength: 6,
+            keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 15),
+          TextField(
+            controller: _playerNameController,
+            decoration: const InputDecoration(
+              labelText: 'اسم اللاعب',
+              hintText: 'اسم تجريبي',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('إلغاء'),
+        ),
+        ElevatedButton(
+          onPressed: _isLoading ? null : _runTest,
+          child:
+              _isLoading
+                  ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                  : const Text('تشغيل الاختبار'),
+        ),
+      ],
+    );
+  }
+}
+
+class _TestResultDialog extends StatelessWidget {
+  final Map<String, dynamic> result;
+
+  const _TestResultDialog({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    final steps = result['steps'] as List<dynamic>;
+    final isSuccess = result['success'] as bool;
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: Row(
+        children: [
+          Icon(
+            isSuccess ? Icons.check_circle : Icons.error,
+            color: isSuccess ? Colors.green : Colors.red,
+          ),
+          const SizedBox(width: 10),
+          Text(
+            isSuccess ? 'نجح الاختبار!' : 'فشل الاختبار',
+            style: TextStyle(color: isSuccess ? Colors.green : Colors.red),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 400,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (!isSuccess && result['error'] != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  border: Border.all(color: Colors.red.shade200),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error, color: Colors.red, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'خطأ: ${result['error']}',
+                        style: TextStyle(
+                          color: Colors.red.shade800,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 15),
+            ],
+            const Text(
+              'خطوات الاختبار:',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: ListView.builder(
+                itemCount: steps.length,
+                itemBuilder: (context, index) {
+                  final step = steps[index] as String;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Text(step, style: const TextStyle(fontSize: 14)),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('إغلاق'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AvailableRoomsDialog extends StatelessWidget {
+  final Map<String, dynamic> result;
+
+  const _AvailableRoomsDialog({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    final rooms = result['rooms'] as List<dynamic>;
+    final isSuccess = result['success'] as bool;
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Row(
+        children: [
+          Icon(Icons.list, color: Colors.orange),
+          SizedBox(width: 10),
+          Text('الغرف المتاحة'),
+        ],
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 400,
+        child:
+            isSuccess
+                ? rooms.isNotEmpty
+                    ? ListView.builder(
+                      itemCount: rooms.length,
+                      itemBuilder: (context, index) {
+                        final room = rooms[index] as Map<String, dynamic>;
+                        return Card(
+                          child: ListTile(
+                            leading: const Icon(Icons.meeting_room),
+                            title: Text('غرفة ${room['id']}'),
+                            subtitle: Text(
+                              'اللاعبين: ${room['playersCount']}/${room['maxPlayers']}',
+                            ),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.copy),
+                              onPressed: () {
+                                Clipboard.setData(
+                                  ClipboardData(text: room['id'].toString()),
+                                );
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('تم نسخ كود الغرفة'),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        );
+                      },
+                    )
+                    : const Center(child: Text('لا توجد غرف متاحة'))
+                : Center(
+                  child: Text(
+                    'خطأ: ${result['error']}',
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('إغلاق'),
+        ),
+      ],
     );
   }
 }

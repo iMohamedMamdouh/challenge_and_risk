@@ -21,10 +21,27 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
   bool _isCreatingRoom = false; // لتحديد نوع العملية
 
   @override
+  void initState() {
+    super.initState();
+    // تشغيل التنظيف التلقائي عند فتح الشاشة
+    _performAutoCleanup();
+  }
+
+  @override
   void dispose() {
     _nameController.dispose();
     _roomCodeController.dispose();
     super.dispose();
+  }
+
+  // تشغيل التنظيف التلقائي في الخلفية
+  void _performAutoCleanup() async {
+    try {
+      print('🤖 تشغيل التنظيف التلقائي في الخلفية...');
+      await _firebaseService.autoCleanEmptyRooms();
+    } catch (e) {
+      print('⚠️ فشل في التنظيف التلقائي: $e');
+    }
   }
 
   void _createRoom() async {
@@ -56,12 +73,18 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final room = await _firebaseService.joinRoom(
+      print('🎮 بدء محاولة الانضمام للغرفة...');
+      print('📝 البيانات المدخلة:');
+      print('   - كود الغرفة: ${_roomCodeController.text.trim()}');
+      print('   - اسم اللاعب: ${_nameController.text.trim()}');
+
+      final room = await _firebaseService.joinRoomWithAutoClean(
         _roomCodeController.text.trim().toUpperCase(),
         _nameController.text.trim(),
       );
 
       if (room != null && mounted) {
+        print('🎉 نجح الانضمام - الانتقال لصفحة الانتظار...');
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -74,11 +97,68 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
           ),
         );
       } else if (mounted) {
-        _showErrorDialog('غرفة غير موجودة أو ممتلئة');
+        print('⚠️ فشل الانضمام - السبب غير محدد');
+
+        // معالجة أخطاء أكثر تفصيلاً
+        String errorMessage = 'لم يتم العثور على الغرفة';
+
+        // محاولة فهم السبب بتشغيل فحص سريع
+        try {
+          final availableRooms = await _firebaseService.getAvailableRooms();
+          if (availableRooms['success'] == true) {
+            final rooms = availableRooms['rooms'] as List;
+            final roomExists = rooms.any(
+              (r) => r['id'] == _roomCodeController.text.trim().toUpperCase(),
+            );
+
+            if (roomExists) {
+              errorMessage =
+                  'الغرفة موجودة لكنها قد تكون ممتلئة أو في حالة لعب';
+            } else if (rooms.isEmpty) {
+              errorMessage =
+                  'لا توجد غرف متاحة حالياً. تأكد من الكود أو أنشئ غرفة جديدة';
+            } else {
+              errorMessage =
+                  'كود الغرفة غير صحيح. الغرف المتاحة: ${rooms.length}';
+            }
+          }
+        } catch (e) {
+          print('خطأ في الفحص التفصيلي: $e');
+        }
+
+        _showDetailedErrorDialog(
+          'فشل الانضمام للغرفة',
+          errorMessage,
+          _roomCodeController.text.trim().toUpperCase(),
+        );
       }
     } catch (e) {
       if (mounted) {
-        _showErrorDialog('حدث خطأ أثناء الانضمام للغرفة: $e');
+        print('❌ خطأ في محاولة الانضمام: $e');
+
+        String errorTitle = 'حدث خطأ أثناء الانضمام';
+        String errorMessage = 'خطأ غير معروف';
+
+        // تحليل نوع الخطأ
+        if (e.toString().contains('permission-denied')) {
+          errorTitle = 'مشكلة في الأذونات';
+          errorMessage =
+              'هناك مشكلة في إعدادات Firebase. يرجى المحاولة لاحقاً أو التواصل مع المطور.';
+        } else if (e.toString().contains('network')) {
+          errorTitle = 'مشكلة في الاتصال';
+          errorMessage = 'تحقق من اتصالك بالإنترنت وحاول مرة أخرى.';
+        } else if (e.toString().contains('timeout') ||
+            e.toString().contains('انتهت مهلة')) {
+          errorTitle = 'انتهت مهلة الاتصال';
+          errorMessage = 'الاتصال بطيء جداً. تحقق من الإنترنت وحاول مرة أخرى.';
+        } else if (e.toString().contains('بيانات الغرفة تالفة')) {
+          errorTitle = 'مشكلة في بيانات الغرفة';
+          errorMessage = 'الغرفة تحتوي على بيانات تالفة. جرب غرفة أخرى.';
+        } else {
+          errorMessage = 'حدث خطأ غير متوقع: ${e.toString()}';
+        }
+
+        _showDetailedErrorDialog(errorTitle, errorMessage, null);
       }
     } finally {
       if (mounted) {
@@ -102,6 +182,121 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
             ],
           ),
     );
+  }
+
+  void _showDetailedErrorDialog(
+    String title,
+    String message,
+    String? roomCode,
+  ) {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(15),
+            ),
+            title: Row(
+              children: [
+                const Icon(Icons.error, color: Colors.red),
+                const SizedBox(width: 10),
+                Expanded(child: Text(title)),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(message),
+                if (roomCode != null) ...[
+                  const SizedBox(height: 15),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'الكود المدخل:',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          roomCode,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 2,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 15),
+                const Text(
+                  'اقتراحات:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 5),
+                const Text(
+                  '• تأكد من صحة كود الغرفة\n'
+                  '• اضغط على "الغرف المتاحة" لرؤية الغرف الموجودة\n'
+                  '• جرب إنشاء غرفة جديدة\n'
+                  '• تحقق من اتصال الإنترنت',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('موافق'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _showAvailableRooms();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('عرض الغرف المتاحة'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  void _showAvailableRooms() async {
+    setState(() => _isLoading = true);
+
+    try {
+      // تشغيل التنظيف التلقائي للغرف الفارغة أولاً
+      await _firebaseService.autoCleanEmptyRooms();
+
+      // عرض الغرف المتاحة
+      final result = await _firebaseService.getAvailableRooms();
+
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => _AvailableRoomsDialog(result: result),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   @override
@@ -299,7 +494,7 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
                                   Icon(Icons.settings),
                                   SizedBox(width: 8),
                                   Text(
-                                    'إعدادات الغرفة',
+                                    'إعداد الغرفة',
                                     style: TextStyle(
                                       fontSize: 16,
                                       fontWeight: FontWeight.bold,
@@ -418,6 +613,41 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
                                 ],
                               ),
                             ),
+
+                            const SizedBox(height: 15),
+
+                            // أزرار إضافية - إزالة زر التنظيف وزر الفحص السريع
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed:
+                                    _isLoading ? null : _showAvailableRooms,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.orange,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                                child: const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.list, size: 20),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'عرض الغرف المتاحة',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -470,6 +700,164 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
                   ),
                 ),
               ),
+    );
+  }
+}
+
+// نافذة عرض الغرف المتاحة
+class _AvailableRoomsDialog extends StatelessWidget {
+  final Map<String, dynamic> result;
+
+  const _AvailableRoomsDialog({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    final rooms = result['rooms'] as List<dynamic>;
+    final isSuccess = result['success'] as bool;
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Row(
+        children: [
+          Icon(Icons.list, color: Colors.blue),
+          SizedBox(width: 10),
+          Text('الغرف المتاحة'),
+        ],
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 400,
+        child:
+            isSuccess
+                ? rooms.isNotEmpty
+                    ? Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: Text(
+                            'تم العثور على ${rooms.length} غرفة متاحة:',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: ListView.builder(
+                            itemCount: rooms.length,
+                            itemBuilder: (context, index) {
+                              final room = rooms[index] as Map<String, dynamic>;
+                              return Card(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                child: ListTile(
+                                  leading: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue.shade100,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Icon(
+                                      Icons.meeting_room,
+                                      color: Colors.blue.shade600,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    'غرفة ${room['id']}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  subtitle: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'اللاعبين: ${room['playersCount']}/${room['maxPlayers']}',
+                                      ),
+                                      Text(
+                                        'المنشئ: ${room['hostName'] ?? 'غير معروف'}',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey.shade600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  trailing:
+                                  // زر نسخ الكود فقط
+                                  IconButton(
+                                    icon: const Icon(Icons.copy),
+                                    onPressed: () {
+                                      Clipboard.setData(
+                                        ClipboardData(
+                                          text: room['id'].toString(),
+                                        ),
+                                      );
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('تم نسخ كود الغرفة'),
+                                          duration: Duration(seconds: 2),
+                                        ),
+                                      );
+                                    },
+                                    tooltip: 'نسخ الكود',
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    )
+                    : const Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.search_off, size: 64, color: Colors.grey),
+                          SizedBox(height: 16),
+                          Text(
+                            'لا توجد غرف متاحة حالياً',
+                            style: TextStyle(fontSize: 16, color: Colors.grey),
+                          ),
+                          SizedBox(height: 8),
+                          Text(
+                            'يمكنك إنشاء غرفة جديدة',
+                            style: TextStyle(fontSize: 14, color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    )
+                : Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.error, size: 64, color: Colors.red),
+                      const SizedBox(height: 16),
+                      Text(
+                        'خطأ: ${result['error']}',
+                        style: const TextStyle(color: Colors.red, fontSize: 16),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('إغلاق'),
+        ),
+        if (isSuccess && rooms.isNotEmpty)
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              // يمكن إضافة تحديث للقائمة هنا
+            },
+            child: const Text('تحديث'),
+          ),
+      ],
     );
   }
 }

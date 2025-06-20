@@ -44,12 +44,12 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'YOUR_WEB_API_KEY',
-    appId: 'YOUR_WEB_APP_ID',
+    apiKey: 'AIzaSyD_WtbY43eaJWaFPIQSFlH1icRbESMSyRM',
+    appId: '1:456425651664:web:your_web_app_id',
     messagingSenderId: '456425651664',
     projectId: 'challenge-and-risk',
     authDomain: 'challenge-and-risk.firebaseapp.com',
-    storageBucket: 'challenge-and-risk.appspot.com',
+    storageBucket: 'challenge-and-risk.firebasestorage.app',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
@@ -57,24 +57,24 @@ class DefaultFirebaseOptions {
     appId: '1:456425651664:android:e6ed77b71c5b4ba09c0dd5',
     messagingSenderId: '456425651664',
     projectId: 'challenge-and-risk',
-    storageBucket: 'challenge-and-risk.appspot.com',
+    storageBucket: 'challenge-and-risk.firebasestorage.app',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'YOUR_IOS_API_KEY',
-    appId: 'YOUR_IOS_APP_ID',
+    apiKey: 'AIzaSyD_WtbY43eaJWaFPIQSFlH1icRbESMSyRM',
+    appId: '1:456425651664:ios:your_ios_app_id',
     messagingSenderId: '456425651664',
     projectId: 'challenge-and-risk',
-    storageBucket: 'challenge-and-risk.appspot.com',
+    storageBucket: 'challenge-and-risk.firebasestorage.app',
     iosBundleId: 'com.example.challengeAndRisk',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'YOUR_MACOS_API_KEY',
-    appId: 'YOUR_MACOS_APP_ID',
+    apiKey: 'AIzaSyD_WtbY43eaJWaFPIQSFlH1icRbESMSyRM',
+    appId: '1:456425651664:macos:your_macos_app_id',
     messagingSenderId: '456425651664',
     projectId: 'challenge-and-risk',
-    storageBucket: 'challenge-and-risk.appspot.com',
+    storageBucket: 'challenge-and-risk.firebasestorage.app',
     iosBundleId: 'com.example.challengeAndRisk',
   );
 }

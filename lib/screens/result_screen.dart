@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/player.dart';
+import '../services/audio_service.dart';
 import '../widgets/player_score_tile.dart';
 import 'game_mode_screen.dart';
 
@@ -15,6 +16,7 @@ class ResultScreen extends StatefulWidget {
 
 class _ResultScreenState extends State<ResultScreen>
     with TickerProviderStateMixin {
+  final AudioService _audioService = AudioService();
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
@@ -25,7 +27,14 @@ class _ResultScreenState extends State<ResultScreen>
     super.initState();
     _setupAnimations();
     _sortPlayers();
+    _initializeAudio();
     _animationController.forward();
+  }
+
+  Future<void> _initializeAudio() async {
+    await _audioService.initialize();
+    // تشغيل موسيقى النتائج فقط
+    await _audioService.playResultsMusic();
   }
 
   void _setupAnimations() {
@@ -79,7 +88,10 @@ class _ResultScreenState extends State<ResultScreen>
     super.dispose();
   }
 
-  void _playAgain() {
+  void _playAgain() async {
+    // إيقاف موسيقى النتائج
+    await _audioService.stopMusic();
+
     // إعادة تعيين نقاط اللاعبين
     for (var player in widget.players) {
       player.resetScore();

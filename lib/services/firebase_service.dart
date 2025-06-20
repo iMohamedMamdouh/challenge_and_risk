@@ -81,6 +81,20 @@ class FirebaseService {
       print('عدد اللاعبين الأقصى: $maxPlayers');
       print('عدد الأسئلة: $questionsCount');
 
+      // التحقق من تهيئة Firebase
+      if (Firebase.apps.isEmpty) {
+        print('❌ Firebase غير مهيأ');
+        return null;
+      }
+
+      // التحقق من إعدادات Firestore
+      try {
+        await _firestore.enableNetwork();
+        print('✅ تم تفعيل شبكة Firestore');
+      } catch (e) {
+        print('⚠️ تحذير: مشكلة في شبكة Firestore: $e');
+      }
+
       final userId = currentUserId;
       print('✅ معرف المستخدم: $userId');
 
@@ -110,13 +124,49 @@ class FirebaseService {
       );
 
       print('💾 جاري حفظ الغرفة في Firebase...');
-      await _roomsCollection.doc(roomCode).set(room.toFirestore());
+      print('🔑 معرف المستند: $roomCode');
+
+      // إضافة معلومات تشخيصية إضافية
+      final roomData = room.toFirestore();
+      print('📄 بيانات الغرفة: ${roomData.keys}');
+
+      // محاولة الكتابة مع مهلة زمنية
+      await _roomsCollection
+          .doc(roomCode)
+          .set(roomData)
+          .timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              throw Exception('انتهت مهلة الكتابة في Firestore');
+            },
+          );
+
       print('✅ تم حفظ الغرفة بنجاح!');
 
+      // التحقق من أن الغرفة تم حفظها
+      try {
+        final savedDoc = await _roomsCollection.doc(roomCode).get();
+        if (savedDoc.exists) {
+          print('✅ تم التحقق من حفظ الغرفة');
+        } else {
+          print('⚠️ الغرفة غير موجودة بعد الحفظ');
+        }
+      } catch (e) {
+        print('⚠️ خطأ في التحقق من الغرفة: $e');
+      }
+
       return room;
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('❌ خطأ في إنشاء الغرفة: $e');
       print('تفاصيل الخطأ: ${e.toString()}');
+      print('Stack trace: $stackTrace');
+
+      // معلومات إضافية للتشخيص
+      if (e.toString().contains('permission-denied')) {
+        print('🔒 خطأ في الأذونات - تحقق من قواعد Firestore');
+        print('💡 تأكد من نشر القواعد في Firebase Console');
+      }
+
       return null;
     }
   }
@@ -124,43 +174,164 @@ class FirebaseService {
   // Join an existing room
   Future<GameRoom?> joinRoom(String roomCode, String playerName) async {
     try {
+      print('🚪 بدء عملية الانضمام للغرفة...');
+      print('🔑 كود الغرفة: $roomCode');
+      print('👤 اسم اللاعب: $playerName');
+
       final userId = currentUserId;
+      print('🆔 معرف المستخدم: $userId');
 
-      final roomDoc = await _roomsCollection.doc(roomCode).get();
-      if (!roomDoc.exists) return null;
+      // التحقق من صحة البيانات
+      if (roomCode.trim().isEmpty) {
+        print('❌ كود الغرفة فارغ');
+        return null;
+      }
 
-      final room = GameRoom.fromFirestore(roomDoc);
-      if (room.isFull || room.state != GameState.waiting) return null;
+      if (playerName.trim().isEmpty) {
+        print('❌ اسم اللاعب فارغ');
+        return null;
+      }
 
-      // Check if player already exists
+      // البحث عن الغرفة مع معالجة الأخطاء
+      print('🔍 البحث عن الغرفة...');
+      DocumentSnapshot roomDoc;
+
+      try {
+        roomDoc = await _roomsCollection
+            .doc(roomCode)
+            .get()
+            .timeout(
+              const Duration(seconds: 15),
+              onTimeout: () {
+                throw Exception('انتهت مهلة البحث عن الغرفة');
+              },
+            );
+      } catch (e) {
+        print('❌ فشل في البحث عن الغرفة: $e');
+        if (e.toString().contains('permission-denied')) {
+          print('🔒 مشكلة في الأذونات - تحقق من قواعد Firestore');
+        } else if (e.toString().contains('network')) {
+          print('🌐 مشكلة في الشبكة');
+        }
+        rethrow;
+      }
+
+      if (!roomDoc.exists) {
+        print('❌ الغرفة غير موجودة');
+        return null;
+      }
+
+      print('✅ تم العثور على الغرفة');
+
+      // تحليل بيانات الغرفة
+      GameRoom room;
+      try {
+        print('📊 تحليل بيانات الغرفة...');
+        room = GameRoom.fromFirestore(roomDoc);
+        print('📋 معلومات الغرفة:');
+        print('   - المضيف: ${room.hostId}');
+        print('   - عدد اللاعبين: ${room.players.length}/${room.maxPlayers}');
+        print('   - الحالة: ${room.state}');
+      } catch (e) {
+        print('❌ فشل في تحليل بيانات الغرفة: $e');
+        throw Exception('بيانات الغرفة تالفة: $e');
+      }
+
+      // التحقق من حالة الغرفة
+      if (room.state != GameState.waiting) {
+        print('❌ الغرفة ليست في حالة انتظار (الحالة: ${room.state})');
+        return null;
+      }
+
+      if (room.isFull) {
+        print('❌ الغرفة ممتلئة (${room.players.length}/${room.maxPlayers})');
+        return null;
+      }
+
+      // التحقق من وجود اللاعب مسبقاً
       final existingPlayerIndex = room.players.indexWhere(
         (p) => p.id == userId,
       );
+
       if (existingPlayerIndex != -1) {
+        print('🔄 اللاعب موجود مسبقاً - تحديث الحالة...');
         // Player already in room, just update online status
         final updatedPlayers = List<OnlinePlayer>.from(room.players);
         updatedPlayers[existingPlayerIndex] =
             updatedPlayers[existingPlayerIndex].copyWith(isOnline: true);
 
-        await _roomsCollection.doc(roomCode).update({
-          'players': updatedPlayers.map((p) => p.toMap()).toList(),
-        });
-
-        return room.copyWith(players: updatedPlayers);
+        try {
+          await _roomsCollection.doc(roomCode).update({
+            'players': updatedPlayers.map((p) => p.toMap()).toList(),
+          });
+          print('✅ تم تحديث حالة اللاعب');
+          return room.copyWith(players: updatedPlayers);
+        } catch (e) {
+          print('❌ فشل في تحديث حالة اللاعب: $e');
+          rethrow;
+        }
       }
 
-      // Add new player
+      // إضافة لاعب جديد
+      print('➕ إضافة لاعب جديد...');
       final newPlayer = OnlinePlayer(id: userId, name: playerName);
-
       final updatedPlayers = [...room.players, newPlayer];
 
-      await _roomsCollection.doc(roomCode).update({
-        'players': updatedPlayers.map((p) => p.toMap()).toList(),
-      });
+      print('💾 حفظ اللاعب الجديد في Firebase...');
+      try {
+        await _roomsCollection
+            .doc(roomCode)
+            .update({'players': updatedPlayers.map((p) => p.toMap()).toList()})
+            .timeout(
+              const Duration(seconds: 15),
+              onTimeout: () {
+                throw Exception('انتهت مهلة حفظ اللاعب');
+              },
+            );
 
-      return room.copyWith(players: updatedPlayers);
+        print('✅ تم الانضمام للغرفة بنجاح!');
+        print(
+          '👥 عدد اللاعبين الحالي: ${updatedPlayers.length}/${room.maxPlayers}',
+        );
+
+        // التحقق من حفظ البيانات
+        try {
+          final verifyDoc = await _roomsCollection.doc(roomCode).get();
+          if (verifyDoc.exists) {
+            final verifyData = verifyDoc.data() as Map<String, dynamic>;
+            final savedPlayers = verifyData['players'] as List<dynamic>;
+            print(
+              '✅ تم التحقق من حفظ البيانات - عدد اللاعبين: ${savedPlayers.length}',
+            );
+          }
+        } catch (e) {
+          print('⚠️ فشل في التحقق من حفظ البيانات: $e');
+        }
+
+        return room.copyWith(players: updatedPlayers);
+      } catch (e) {
+        print('❌ فشل في حفظ اللاعب الجديد: $e');
+        if (e.toString().contains('permission-denied')) {
+          print('🔒 مشكلة في الأذونات - تحقق من قواعد Firestore');
+        } else if (e.toString().contains('network')) {
+          print('🌐 مشكلة في الشبكة');
+        }
+        rethrow;
+      }
     } catch (e) {
-      print('Error joining room: $e');
+      print('❌ خطأ عام في الانضمام للغرفة: $e');
+      print('🔍 نوع الخطأ: ${e.runtimeType}');
+      print('📄 تفاصيل الخطأ: ${e.toString()}');
+
+      // تحليل تفصيلي للخطأ
+      if (e.toString().contains('permission-denied')) {
+        print('💡 الحل المحتمل: تحقق من قواعد Firebase Security Rules');
+      } else if (e.toString().contains('network')) {
+        print('💡 الحل المحتمل: تحقق من اتصال الإنترنت');
+      } else if (e.toString().contains('timeout')) {
+        print('💡 الحل المحتمل: اتصال بطيء أو مشكلة في الخادم');
+      }
+
       return null;
     }
   }
@@ -299,37 +470,181 @@ class FirebaseService {
   // Leave room
   Future<bool> leaveRoom(String roomCode) async {
     try {
+      print('🚪 بدء عملية مغادرة الغرفة: $roomCode');
       final userId = currentUserId;
 
       final roomDoc = await _roomsCollection.doc(roomCode).get();
-      if (!roomDoc.exists) return false;
+      if (!roomDoc.exists) {
+        print('❌ الغرفة غير موجودة أو محذوفة مسبقاً');
+        return true; // نعتبر العملية ناجحة لأن الهدف تحقق (عدم وجود اللاعب في الغرفة)
+      }
 
       final room = GameRoom.fromFirestore(roomDoc);
+      print('👥 عدد اللاعبين الحالي: ${room.players.length}');
 
-      // If host leaves, delete the room
-      if (room.hostId == userId) {
-        await _roomsCollection.doc(roomCode).delete();
+      // التحقق من وجود اللاعب في الغرفة
+      final playerExists = room.players.any((player) => player.id == userId);
+      if (!playerExists) {
+        print('ℹ️ اللاعب غير موجود في الغرفة مسبقاً');
         return true;
       }
 
-      // Remove player from room
-      final updatedPlayers =
-          room.players.where((player) => player.id != userId).toList();
+      bool roomDeleted = false;
 
-      if (updatedPlayers.isEmpty) {
-        // No players left, delete room
+      // إذا كان هذا هو اللاعب الوحيد، احذف الغرفة مباشرة
+      if (room.players.length <= 1) {
+        print('🗑️ آخر لاعب يغادر - حذف الغرفة تلقائياً');
         await _roomsCollection.doc(roomCode).delete();
+        print('✅ تم حذف الغرفة تلقائياً');
+        roomDeleted = true;
+      }
+      // إذا كان المضيف يغادر
+      else if (room.hostId == userId) {
+        print('👑 المضيف يغادر الغرفة');
+
+        // العثور على لاعب آخر ليصبح المضيف الجديد
+        final remainingPlayers =
+            room.players.where((player) => player.id != userId).toList();
+
+        if (remainingPlayers.isEmpty) {
+          // لا يوجد لاعبين آخرين، احذف الغرفة
+          print('🗑️ لا يوجد لاعبين آخرين - حذف الغرفة');
+          await _roomsCollection.doc(roomCode).delete();
+          print('✅ تم حذف الغرفة تلقائياً');
+          roomDeleted = true;
+        } else {
+          // نقل المضيف للاعب التالي
+          final newHost = remainingPlayers.first;
+          final updatedPlayers =
+              remainingPlayers.map((player) {
+                if (player.id == newHost.id) {
+                  return player.copyWith(isHost: true);
+                }
+                return player.copyWith(isHost: false);
+              }).toList();
+
+          print('👑 نقل المضيف إلى: ${newHost.name}');
+          await _roomsCollection.doc(roomCode).update({
+            'hostId': newHost.id,
+            'players': updatedPlayers.map((p) => p.toMap()).toList(),
+          });
+          print('✅ تم نقل المضيف وإزالة اللاعب');
+        }
       } else {
-        await _roomsCollection.doc(roomCode).update({
-          'players': updatedPlayers.map((p) => p.toMap()).toList(),
-        });
+        // لاعب عادي يغادر
+        print('👤 لاعب عادي يغادر الغرفة');
+        final updatedPlayers =
+            room.players.where((player) => player.id != userId).toList();
+
+        if (updatedPlayers.isEmpty) {
+          // آخر لاعب يغادر، احذف الغرفة
+          print('🗑️ آخر لاعب يغادر - حذف الغرفة');
+          await _roomsCollection.doc(roomCode).delete();
+          print('✅ تم حذف الغرفة تلقائياً');
+          roomDeleted = true;
+        } else {
+          // تحديث قائمة اللاعبين فقط
+          await _roomsCollection.doc(roomCode).update({
+            'players': updatedPlayers.map((p) => p.toMap()).toList(),
+          });
+          print('✅ تم إزالة اللاعب من الغرفة');
+        }
+      }
+
+      // تحقق إضافي من أن الغرفة لم تصبح فارغة (فقط إذا لم يتم حذفها)
+      if (!roomDeleted) {
+        await _checkAndCleanEmptyRoom(roomCode);
       }
 
       return true;
     } catch (e) {
-      print('Error leaving room: $e');
+      print('❌ خطأ في مغادرة الغرفة: $e');
+      print('🔍 نوع الخطأ: ${e.runtimeType}');
+      print('📄 تفاصيل الخطأ: ${e.toString()}');
       return false;
     }
+  }
+
+  // دالة مساعدة للتحقق من الغرف الفارغة وحذفها
+  Future<void> _checkAndCleanEmptyRoom(String roomCode) async {
+    try {
+      print('🔍 فحص الغرفة للتأكد من عدم كونها فارغة: $roomCode');
+
+      final roomDoc = await _roomsCollection.doc(roomCode).get();
+      if (!roomDoc.exists) {
+        print('ℹ️ الغرفة محذوفة مسبقاً أو غير موجودة');
+        return;
+      }
+
+      final roomData = roomDoc.data() as Map<String, dynamic>?;
+      if (roomData == null) {
+        print('⚠️ بيانات الغرفة فارغة - حذف الغرفة');
+        await _roomsCollection.doc(roomCode).delete();
+        return;
+      }
+
+      final players = roomData['players'] as List<dynamic>? ?? [];
+
+      if (players.isEmpty) {
+        print('🧹 تم اكتشاف غرفة فارغة، يتم حذفها...');
+        await _roomsCollection.doc(roomCode).delete();
+        print('✅ تم حذف الغرفة الفارغة تلقائياً');
+      } else {
+        print('👥 الغرفة تحتوي على ${players.length} لاعب - لا حاجة للحذف');
+      }
+    } catch (e) {
+      print('⚠️ خطأ في فحص الغرفة الفارغة: $e');
+      // لا نرمي الخطأ هنا لتجنب مقاطعة عملية المغادرة الأساسية
+    }
+  }
+
+  // دالة لمراقبة الغرف وحذف الفارغة تلقائياً (يمكن استدعاؤها دورياً)
+  Future<int> autoCleanEmptyRooms() async {
+    try {
+      print('🤖 بدء التنظيف التلقائي للغرف الفارغة...');
+
+      final querySnapshot = await _roomsCollection.get();
+      int deletedCount = 0;
+
+      for (final doc in querySnapshot.docs) {
+        try {
+          final roomData = doc.data() as Map<String, dynamic>;
+          final players = roomData['players'] as List<dynamic>? ?? [];
+
+          // حذف الغرف الفارغة
+          if (players.isEmpty) {
+            await doc.reference.delete();
+            deletedCount++;
+            print('🗑️ تم حذف الغرفة الفارغة تلقائياً: ${doc.id}');
+          }
+        } catch (e) {
+          print('⚠️ خطأ في معالجة الغرفة ${doc.id}: $e');
+        }
+      }
+
+      if (deletedCount > 0) {
+        print('🎯 التنظيف التلقائي مكتمل: تم حذف $deletedCount غرفة فارغة');
+      } else {
+        print('✨ جميع الغرف تحتوي على لاعبين - لا حاجة للتنظيف');
+      }
+
+      return deletedCount;
+    } catch (e) {
+      print('❌ خطأ في التنظيف التلقائي: $e');
+      return 0;
+    }
+  }
+
+  // دالة محسّنة للانضمام للغرفة مع التحقق من عدم وجود غرف فارغة
+  Future<GameRoom?> joinRoomWithAutoClean(
+    String roomCode,
+    String playerName,
+  ) async {
+    // تنظيف تلقائي قبل الانضمام
+    await autoCleanEmptyRooms();
+
+    // محاولة الانضمام العادية
+    return await joinRoom(roomCode, playerName);
   }
 
   // Listen to room changes
@@ -373,5 +688,177 @@ class FirebaseService {
       print('Error resetting room: $e');
       return false;
     }
+  }
+
+  // حذف الغرف الفارغة
+  Future<int> deleteEmptyRooms() async {
+    try {
+      print('🧹 بدء عملية تنظيف الغرف الفارغة...');
+
+      final querySnapshot = await _roomsCollection.get();
+      int deletedCount = 0;
+
+      for (final doc in querySnapshot.docs) {
+        try {
+          final roomData = doc.data() as Map<String, dynamic>;
+          final players = roomData['players'] as List<dynamic>? ?? [];
+
+          // حذف الغرف الفارغة (بدون لاعبين)
+          if (players.isEmpty) {
+            await doc.reference.delete();
+            deletedCount++;
+            print('🗑️ تم حذف الغرفة الفارغة: ${doc.id}');
+          }
+        } catch (e) {
+          print('⚠️ خطأ في معالجة الغرفة ${doc.id}: $e');
+        }
+      }
+
+      print('✅ تم حذف $deletedCount غرفة فارغة');
+      return deletedCount;
+    } catch (e) {
+      print('❌ خطأ في تنظيف الغرف الفارغة: $e');
+      return 0;
+    }
+  }
+
+  // حذف الغرف القديمة المنتهية
+  Future<int> deleteOldFinishedRooms({int hoursThreshold = 24}) async {
+    try {
+      print('🧹 بدء عملية تنظيف الغرف القديمة...');
+
+      final cutoffTime = DateTime.now().subtract(
+        Duration(hours: hoursThreshold),
+      );
+      final querySnapshot =
+          await _roomsCollection
+              .where('state', isEqualTo: GameState.finished.index)
+              .get();
+
+      int deletedCount = 0;
+
+      for (final doc in querySnapshot.docs) {
+        try {
+          final roomData = doc.data() as Map<String, dynamic>;
+          final createdAt = (roomData['createdAt'] as Timestamp?)?.toDate();
+
+          if (createdAt != null && createdAt.isBefore(cutoffTime)) {
+            await doc.reference.delete();
+            deletedCount++;
+            print('🗑️ تم حذف الغرفة القديمة: ${doc.id}');
+          }
+        } catch (e) {
+          print('⚠️ خطأ في معالجة الغرفة ${doc.id}: $e');
+        }
+      }
+
+      print('✅ تم حذف $deletedCount غرفة قديمة');
+      return deletedCount;
+    } catch (e) {
+      print('❌ خطأ في تنظيف الغرف القديمة: $e');
+      return 0;
+    }
+  }
+
+  // تنظيف شامل للغرف
+  Future<Map<String, int>> cleanupRooms() async {
+    print('🧹 بدء التنظيف الشامل للغرف...');
+
+    final emptyRoomsDeleted = await deleteEmptyRooms();
+    final oldRoomsDeleted = await deleteOldFinishedRooms();
+
+    final result = {
+      'emptyRooms': emptyRoomsDeleted,
+      'oldRooms': oldRoomsDeleted,
+      'total': emptyRoomsDeleted + oldRoomsDeleted,
+    };
+
+    print('🏁 انتهت عملية التنظيف الشامل:');
+    print('   - غرف فارغة: $emptyRoomsDeleted');
+    print('   - غرف قديمة: $oldRoomsDeleted');
+    print('   - المجموع: ${result['total']}');
+
+    return result;
+  }
+
+  // دالة مساعدة لفحص وحذف الغرفة إذا كانت فارغة
+  Future<bool> checkAndDeleteIfEmpty(String roomCode) async {
+    try {
+      final roomDoc = await _roomsCollection.doc(roomCode).get();
+      if (!roomDoc.exists) return false;
+
+      final roomData = roomDoc.data() as Map<String, dynamic>;
+      final players = roomData['players'] as List<dynamic>? ?? [];
+
+      if (players.isEmpty) {
+        await _roomsCollection.doc(roomCode).delete();
+        print('🗑️ تم حذف الغرفة الفارغة: $roomCode');
+        return true;
+      }
+
+      return false;
+    } catch (e) {
+      print('❌ خطأ في فحص الغرفة: $e');
+      return false;
+    }
+  }
+
+  // عرض الغرف المتاحة
+  Future<Map<String, dynamic>> getAvailableRooms() async {
+    final Map<String, dynamic> result = {
+      'success': false,
+      'rooms': [],
+      'error': null,
+    };
+
+    try {
+      print('🔍 البحث عن الغرف المتاحة...');
+
+      final querySnapshot = await _roomsCollection
+          .where('state', isEqualTo: 0) // 0 = waiting state
+          .limit(10)
+          .get()
+          .timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              throw Exception('انتهت مهلة البحث عن الغرف');
+            },
+          );
+
+      result['rooms'] =
+          querySnapshot.docs.map((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final players = data['players'] as List<dynamic>;
+
+            // البحث عن المضيف (المنشئ) من قائمة اللاعبين
+            String hostName = 'غير معروف';
+            final hostId = data['hostId'] as String;
+
+            for (final playerData in players) {
+              final player = playerData as Map<String, dynamic>;
+              if (player['id'] == hostId) {
+                hostName = player['name'] as String? ?? 'غير معروف';
+                break;
+              }
+            }
+
+            return {
+              'id': doc.id,
+              'hostId': data['hostId'],
+              'hostName': hostName,
+              'playersCount': players.length,
+              'maxPlayers': data['maxPlayers'],
+              'createdAt': data['createdAt'],
+            };
+          }).toList();
+
+      result['success'] = true;
+      print('✅ تم العثور على ${result['rooms'].length} غرفة متاحة');
+    } catch (e) {
+      result['error'] = 'فشل في البحث عن الغرف: $e';
+      print('❌ فشل في البحث عن الغرف: $e');
+    }
+
+    return result;
   }
 }

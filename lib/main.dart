@@ -7,24 +7,32 @@ import 'screens/splash_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // تهيئة Firebase - تحقق من عدم التهيئة المسبقة
+  // تهيئة Firebase مع معالجة أفضل للأخطاء
   try {
+    print('🚀 بدء تهيئة Firebase...');
+
     if (Firebase.apps.isEmpty) {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
+      print('✅ تم تهيئة Firebase بنجاح');
     } else {
-      // إذا كان Firebase مهيأ بالفعل، استخدم التطبيق الموجود
-      Firebase.app();
+      // استخدام التطبيق الموجود
+      final app = Firebase.app();
+      print('✅ استخدام تطبيق Firebase الموجود: ${app.name}');
     }
-  } catch (e) {
-    print('Firebase initialization error: $e');
-    // حاول استخدام التطبيق الافتراضي إذا كان موجوداً
-    try {
-      Firebase.app();
-    } catch (e2) {
-      print('Firebase app access error: $e2');
-    }
+
+    // التحقق من تهيئة Firebase
+    final app = Firebase.app();
+    print('📱 تفاصيل التطبيق:');
+    print('   الاسم: ${app.name}');
+    print('   الخيارات: ${app.options}');
+  } catch (e, stackTrace) {
+    print('❌ خطأ في تهيئة Firebase: $e');
+    print('Stack trace: $stackTrace');
+
+    // محاولة الاستمرار بدون Firebase للاختبار
+    print('⚠️ المتابعة بدون Firebase...');
   }
 
   runApp(const ChallengeAndRiskApp());
