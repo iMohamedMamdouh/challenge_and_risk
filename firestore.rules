@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // قواعد للعبة التحدي والمخاطرة - مفتوحة للاختبار
+    match /game_rooms/{roomId} {
+      // السماح بالقراءة والكتابة للجميع (للاختبار)
+      allow read, write: if true;
+    }
+  }
+} 

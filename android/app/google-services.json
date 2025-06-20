@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "456425651664",
+    "project_id": "challenge-and-risk",
+    "storage_bucket": "challenge-and-risk.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:456425651664:android:e6ed77b71c5b4ba09c0dd5",
+        "android_client_info": {
+          "package_name": "com.example.challenge_and_risk"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD_WtbY43eaJWaFPIQSFlH1icRbESMSyRM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
