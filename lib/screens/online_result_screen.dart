@@ -95,9 +95,27 @@ class _OnlineResultScreenState extends State<OnlineResultScreen>
     ];
   }
 
+  // دالة للحصول على الفائزين (في حالة التعادل)
+  List<Map<String, dynamic>> _getWinners() {
+    if (widget.players.isEmpty) return [];
+
+    final highestScore = widget.players[0]['score'];
+    return widget.players
+        .where((player) => player['score'] == highestScore)
+        .toList();
+  }
+
+  // فحص ما إذا كان هناك تعادل
+  bool _hasTie() {
+    final winners = _getWinners();
+    return winners.length > 1;
+  }
+
   @override
   Widget build(BuildContext context) {
     final winner = widget.players.isNotEmpty ? widget.players.first : null;
+    final winners = _getWinners();
+    final hasTie = _hasTie();
 
     return Scaffold(
       backgroundColor: Colors.deepPurple.shade50,
@@ -130,14 +148,24 @@ class _OnlineResultScreenState extends State<OnlineResultScreen>
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
-                        colors: [Colors.amber.shade400, Colors.amber.shade600],
+                        colors:
+                            hasTie
+                                ? [
+                                  Colors.purple.shade400,
+                                  Colors.purple.shade600,
+                                ]
+                                : [
+                                  Colors.amber.shade400,
+                                  Colors.amber.shade600,
+                                ],
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                       ),
                       borderRadius: BorderRadius.circular(20),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.amber.withOpacity(0.3),
+                          color: (hasTie ? Colors.purple : Colors.amber)
+                              .withOpacity(0.3),
                           spreadRadius: 5,
                           blurRadius: 15,
                           offset: const Offset(0, 5),
@@ -146,37 +174,67 @@ class _OnlineResultScreenState extends State<OnlineResultScreen>
                     ),
                     child: Column(
                       children: [
-                        const Icon(
-                          Icons.emoji_events,
+                        Icon(
+                          hasTie ? Icons.people : Icons.emoji_events,
                           size: 60,
                           color: Colors.white,
                         ),
                         const SizedBox(height: 10),
-                        const Text(
-                          '🎉 الفائز 🎉',
-                          style: TextStyle(
+                        Text(
+                          hasTie ? '🤝 تعادل! 🤝' : '🎉 الفائز 🎉',
+                          style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
                           ),
                         ),
                         const SizedBox(height: 10),
-                        Text(
-                          winner['name'] ?? '',
-                          style: const TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
+                        if (hasTie) ...[
+                          const Text(
+                            'الفائزون:',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          '${winner['score']} نقطة من ${widget.totalQuestions}',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            color: Colors.white,
+                          const SizedBox(height: 5),
+                          ...winners.map(
+                            (winner) => Text(
+                              winner['name'] ?? '',
+                              style: const TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
                           ),
-                        ),
+                          const SizedBox(height: 5),
+                          Text(
+                            '${winners[0]['score']} نقطة لكل منهم من ${widget.totalQuestions}',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ] else ...[
+                          Text(
+                            winner['name'] ?? '',
+                            style: const TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            '${winner['score']} نقطة من ${widget.totalQuestions}',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),

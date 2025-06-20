@@ -13,8 +13,15 @@ import 'result_screen.dart';
 
 class QuestionScreen extends StatefulWidget {
   final List<Player> players;
+  final int? questionsCount;
+  final List<String>? selectedCategories;
 
-  const QuestionScreen({super.key, required this.players});
+  const QuestionScreen({
+    super.key,
+    required this.players,
+    this.questionsCount,
+    this.selectedCategories,
+  });
 
   @override
   State<QuestionScreen> createState() => _QuestionScreenState();
@@ -27,17 +34,22 @@ class _QuestionScreenState extends State<QuestionScreen> {
   int? _selectedAnswer;
   bool _isLoading = true;
   final bool _showResult = false;
-  final int _totalQuestions = 10; // عدد الأسئلة لكل لعبة
+  late final int _totalQuestions; // عدد الأسئلة لكل لعبة
   final AudioService _audioService = AudioService();
   final Random _random = Random(); // لاختيار اللاعب التالي عشوائياً
+
+  // نظام الدوران الجديد
+  List<int> _availablePlayerIndices = []; // اللاعبين المتاحين في الجولة الحالية
+  int _currentRound = 1; // رقم الجولة الحالية
 
   @override
   void initState() {
     super.initState();
+    _totalQuestions =
+        widget.questionsCount ?? 10; // استخدام العدد المُمرر أو 10 كافتراضي
     _loadQuestions();
     _initializeAudio();
-    // اختيار اللاعب الأول عشوائياً
-    _currentPlayerIndex = _random.nextInt(widget.players.length);
+    _initializeRound(); // تهيئة الجولة الأولى
   }
 
   Future<void> _initializeAudio() async {
@@ -50,8 +62,23 @@ class _QuestionScreenState extends State<QuestionScreen> {
         'assets/data/questions.json',
       );
       final List<dynamic> data = json.decode(response);
-      final List<Question> allQuestions =
+      List<Question> allQuestions =
           data.map((json) => Question.fromJson(json)).toList();
+
+      // فلترة الأسئلة حسب الفئات المختارة
+      if (widget.selectedCategories != null &&
+          !widget.selectedCategories!.contains('جميع الفئات')) {
+        allQuestions =
+            allQuestions.where((question) {
+              return widget.selectedCategories!.contains(question.category);
+            }).toList();
+      }
+
+      // التأكد من وجود أسئلة كافية
+      if (allQuestions.length < _totalQuestions) {
+        // إذا لم توجد أسئلة كافية، استخدم كل الأسئلة المتاحة
+        print('تحذير: عدد الأسئلة المتاحة أقل من المطلوب');
+      }
 
       // اختيار أسئلة عشوائية
       final random = Random();
@@ -120,7 +147,7 @@ class _QuestionScreenState extends State<QuestionScreen> {
               ElevatedButton(
                 onPressed: () {
                   Navigator.of(context).pop();
-                  _nextTurn();
+                  _nextQuestion();
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green,
@@ -140,36 +167,66 @@ class _QuestionScreenState extends State<QuestionScreen> {
         builder:
             (context) => ChallengeScreen(
               playerName: widget.players[_currentPlayerIndex].name,
-              correctAnswer: _questions[_currentQuestionIndex].correctAnswer,
               onChallengeCompleted: () {
                 Navigator.pop(context);
-                _nextTurn();
+                _nextTurn(); // الانتقال للاعب التالي مع نفس السؤال عند الإجابة الخاطئة
               },
             ),
       ),
     );
   }
 
+  // تهيئة جولة جديدة
+  void _initializeRound() {
+    _availablePlayerIndices = List.generate(
+      widget.players.length,
+      (index) => index,
+    );
+    _selectRandomPlayer();
+  }
+
+  // اختيار لاعب عشوائي من المتاحين
+  void _selectRandomPlayer() {
+    if (_availablePlayerIndices.isEmpty) {
+      // إذا انتهت الجولة، ابدأ جولة جديدة
+      _currentRound++;
+      _initializeRound();
+      return;
+    }
+
+    // اختيار لاعب عشوائي من المتاحين
+    final randomIndex = _random.nextInt(_availablePlayerIndices.length);
+    _currentPlayerIndex = _availablePlayerIndices[randomIndex];
+
+    // إزالة اللاعب من قائمة المتاحين
+    _availablePlayerIndices.removeAt(randomIndex);
+  }
+
   void _nextTurn() {
     setState(() {
       _selectedAnswer = null; // مسح الإجابة المختارة للاعب التالي
+      _selectRandomPlayer(); // اختيار اللاعب التالي من النظام الجديد
+    });
+  }
 
-      // اختيار اللاعب التالي عشوائياً (تجنب نفس اللاعب إذا كان هناك أكثر من لاعب واحد)
-      if (widget.players.length > 1) {
-        int nextPlayerIndex;
-        do {
-          nextPlayerIndex = _random.nextInt(widget.players.length);
-        } while (nextPlayerIndex == _currentPlayerIndex);
-        _currentPlayerIndex = nextPlayerIndex;
-      }
+  void _nextQuestion() {
+    setState(() {
+      _selectedAnswer = null; // مسح الإجابة المختارة
 
       // الانتقال للسؤال التالي
       _currentQuestionIndex++;
 
       // إذا انتهت الأسئلة، اعرض النتائج
       if (_currentQuestionIndex >= _questions.length) {
-        _showResults();
+        // تأجيل الانتقال للنتائج إلى ما بعد انتهاء setState
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showResults();
+        });
+        return;
       }
+
+      // اختيار اللاعب التالي للسؤال الجديد
+      _selectRandomPlayer();
     });
   }
 
@@ -203,6 +260,15 @@ class _QuestionScreenState extends State<QuestionScreen> {
             'لم يتم العثور على أسئلة',
             style: TextStyle(fontSize: 18),
           ),
+        ),
+      );
+    }
+
+    // فحص إضافي للتأكد من عدم تجاوز فهرس الأسئلة
+    if (_currentQuestionIndex >= _questions.length) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: Colors.deepPurple),
         ),
       );
     }

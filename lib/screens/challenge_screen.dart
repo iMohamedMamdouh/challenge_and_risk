@@ -6,13 +6,11 @@ import 'package:flutter/services.dart';
 
 class ChallengeScreen extends StatefulWidget {
   final String playerName;
-  final String correctAnswer;
   final VoidCallback onChallengeCompleted;
 
   const ChallengeScreen({
     super.key,
     required this.playerName,
-    required this.correctAnswer,
     required this.onChallengeCompleted,
   });
 
@@ -148,23 +146,6 @@ class _ChallengeScreenState extends State<ChallengeScreen>
                                     color: Colors.red,
                                   ),
                                   textAlign: TextAlign.center,
-                                ),
-                                const SizedBox(height: 15),
-                                Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    'الإجابة الصحيحة: ${widget.correctAnswer}',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.black87,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
                                 ),
                               ],
                             ),

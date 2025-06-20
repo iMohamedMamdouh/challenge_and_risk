@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/player.dart';
 import '../widgets/player_score_tile.dart';
-import 'home_screen.dart';
+import 'game_mode_screen.dart';
 
 class ResultScreen extends StatefulWidget {
   final List<Player> players;
@@ -57,6 +57,22 @@ class _ResultScreenState extends State<ResultScreen>
     _sortedPlayers.sort((a, b) => b.score.compareTo(a.score));
   }
 
+  // دالة للحصول على الفائزين (في حالة التعادل)
+  List<Player> _getWinners() {
+    if (_sortedPlayers.isEmpty) return [];
+
+    final highestScore = _sortedPlayers[0].score;
+    return _sortedPlayers
+        .where((player) => player.score == highestScore)
+        .toList();
+  }
+
+  // فحص ما إذا كان هناك تعادل
+  bool _hasTie() {
+    final winners = _getWinners();
+    return winners.length > 1;
+  }
+
   @override
   void dispose() {
     _animationController.dispose();
@@ -71,7 +87,7 @@ class _ResultScreenState extends State<ResultScreen>
 
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(builder: (context) => const HomeScreen()),
+      MaterialPageRoute(builder: (context) => const GameModeScreen()),
       (route) => false,
     );
   }
@@ -79,19 +95,25 @@ class _ResultScreenState extends State<ResultScreen>
   Widget _buildWinnerPodium() {
     if (_sortedPlayers.isEmpty) return const SizedBox.shrink();
 
+    final winners = _getWinners();
+    final hasTie = _hasTie();
+
     return Container(
       margin: const EdgeInsets.all(20),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.amber.shade300, Colors.amber.shade600],
+          colors:
+              hasTie
+                  ? [Colors.purple.shade300, Colors.purple.shade600]
+                  : [Colors.amber.shade300, Colors.amber.shade600],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.amber.withOpacity(0.4),
+            color: (hasTie ? Colors.purple : Colors.amber).withOpacity(0.4),
             spreadRadius: 3,
             blurRadius: 10,
             offset: const Offset(0, 5),
@@ -100,11 +122,15 @@ class _ResultScreenState extends State<ResultScreen>
       ),
       child: Column(
         children: [
-          const Icon(Icons.emoji_events, color: Colors.white, size: 50),
+          Icon(
+            hasTie ? Icons.people : Icons.emoji_events,
+            color: Colors.white,
+            size: 50,
+          ),
           const SizedBox(height: 10),
-          const Text(
-            '🎉 الفائز 🎉',
-            style: TextStyle(
+          Text(
+            hasTie ? '🤝 تعادل! 🤝' : '🎉 الفائز 🎉',
+            style: const TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
               color: Colors.white,
@@ -119,23 +145,57 @@ class _ResultScreenState extends State<ResultScreen>
             ),
             child: Column(
               children: [
-                Text(
-                  _sortedPlayers[0].name,
-                  style: const TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.amber,
+                if (hasTie) ...[
+                  const Text(
+                    'الفائزون:',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.purple,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  '${_sortedPlayers[0].score} نقطة',
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.amber,
+                  const SizedBox(height: 10),
+                  ...winners.map(
+                    (winner) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Text(
+                        winner.name,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.purple.shade700,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '${winners[0].score} نقطة لكل منهم',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.purple.shade600,
+                    ),
+                  ),
+                ] else ...[
+                  Text(
+                    _sortedPlayers[0].name,
+                    style: const TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.amber,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '${_sortedPlayers[0].score} نقطة',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.amber,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -199,6 +259,8 @@ class _ResultScreenState extends State<ResultScreen>
       (sum, player) => sum + player.score,
     );
     final averageScore = totalPoints / _sortedPlayers.length;
+    final winners = _getWinners();
+    final hasTie = _hasTie();
 
     return Container(
       margin: const EdgeInsets.all(20),
@@ -238,6 +300,32 @@ class _ResultScreenState extends State<ResultScreen>
               ),
             ],
           ),
+          if (hasTie) ...[
+            const SizedBox(height: 15),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.purple.shade50,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.purple.shade200),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.people, color: Colors.purple.shade600),
+                  const SizedBox(width: 8),
+                  Text(
+                    'تعادل بين ${winners.length} لاعبين',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.purple.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -343,7 +431,7 @@ class _ResultScreenState extends State<ResultScreen>
                               Navigator.pushAndRemoveUntil(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) => const HomeScreen(),
+                                  builder: (context) => const GameModeScreen(),
                                 ),
                                 (route) => false,
                               );

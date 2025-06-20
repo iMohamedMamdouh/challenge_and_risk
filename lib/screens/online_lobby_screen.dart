@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../models/game_room.dart';
 import '../services/firebase_service.dart';
 import 'online_question_screen.dart';
+import 'room_settings_screen.dart';
 
 class OnlineLobbyScreen extends StatefulWidget {
   final String roomCode;
@@ -138,6 +139,25 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
     }
   }
 
+  void _goBackToSettings() async {
+    // إذا كان المضيف، اذهب لصفحة الإعدادات بدلاً من مغادرة الغرفة
+    try {
+      await _firebaseService.leaveRoom(widget.roomCode);
+    } catch (e) {
+      // تجاهل الأخطاء عند المغادرة
+    }
+
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder:
+              (context) => RoomSettingsScreen(playerName: widget.playerName),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final canStart = widget.isHost && (_currentRoom?.players.length ?? 0) >= 2;
@@ -147,9 +167,14 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
     return PopScope(
       onPopInvoked: (didPop) {
         if (didPop) {
-          _leaveRoom();
+          if (widget.isHost) {
+            _goBackToSettings();
+          } else {
+            _leaveRoom();
+          }
         }
       },
+      canPop: false,
       child: Scaffold(
         backgroundColor: Colors.deepPurple.shade50,
         appBar: AppBar(
@@ -166,7 +191,8 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
           elevation: 0,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back, color: Colors.white),
-            onPressed: _leaveRoom,
+            onPressed: widget.isHost ? _goBackToSettings : _leaveRoom,
+            tooltip: widget.isHost ? 'العودة للإعدادات' : 'مغادرة الغرفة',
           ),
           actions: [
             IconButton(

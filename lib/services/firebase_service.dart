@@ -50,7 +50,7 @@ class FirebaseService {
   }
 
   // Load questions from assets
-  Future<List<Question>> _loadQuestions() async {
+  Future<List<Question>> _loadQuestions({int count = 10}) async {
     try {
       final String response = await rootBundle.loadString(
         'assets/data/questions.json',
@@ -59,10 +59,10 @@ class FirebaseService {
       final List<Question> allQuestions =
           data.map((json) => Question.fromJson(json)).toList();
 
-      // Shuffle and take 10 questions
+      // Shuffle and take specified number of questions
       final random = Random();
       allQuestions.shuffle(random);
-      return allQuestions.take(10).toList();
+      return allQuestions.take(count).toList();
     } catch (e) {
       print('Error loading questions: $e');
       return [];
@@ -70,11 +70,16 @@ class FirebaseService {
   }
 
   // Create a new game room
-  Future<GameRoom?> createRoom(String hostName, int maxPlayers) async {
+  Future<GameRoom?> createRoom(
+    String hostName,
+    int maxPlayers, {
+    int questionsCount = 10,
+  }) async {
     try {
       print('🚀 بدء إنشاء الغرفة...');
       print('اسم اللاعب: $hostName');
       print('عدد اللاعبين الأقصى: $maxPlayers');
+      print('عدد الأسئلة: $questionsCount');
 
       final userId = currentUserId;
       print('✅ معرف المستخدم: $userId');
@@ -83,7 +88,7 @@ class FirebaseService {
       print('🎲 تم إنشاء كود الغرفة: $roomCode');
 
       print('📚 جاري تحميل الأسئلة...');
-      final questions = await _loadQuestions();
+      final questions = await _loadQuestions(count: questionsCount);
       if (questions.isEmpty) {
         print('❌ فشل في تحميل الأسئلة');
         return null;

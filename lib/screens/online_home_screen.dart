@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../services/firebase_service.dart';
 import 'online_lobby_screen.dart';
+import 'room_settings_screen.dart';
 
 class OnlineHomeScreen extends StatefulWidget {
   const OnlineHomeScreen({super.key});
@@ -34,67 +35,17 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    // الانتقال إلى صفحة إعدادات الغرفة بدلاً من إنشاء الغرفة مباشرة
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder:
+            (context) =>
+                RoomSettingsScreen(playerName: _nameController.text.trim()),
+      ),
+    );
 
-    try {
-      print('🚀 بدء إنشاء الغرفة...');
-      print('اسم اللاعب: ${_nameController.text.trim()}');
-
-      // استخدام عدد لاعبين افتراضي (6)
-      const maxPlayers = 6;
-      print('عدد اللاعبين الأقصى: $maxPlayers');
-
-      final room = await _firebaseService.createRoom(
-        _nameController.text.trim(),
-        maxPlayers,
-      );
-
-      print('نتيجة إنشاء الغرفة: $room');
-
-      if (room != null && mounted) {
-        print('✅ تم إنشاء الغرفة بنجاح! كود الغرفة: ${room.id}');
-
-        // إظهار رسالة نجاح مع كود الغرفة
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('تم إنشاء الغرفة بنجاح! كود الغرفة: ${room.id}'),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder:
-                (context) => OnlineLobbyScreen(
-                  roomCode: room.id,
-                  playerName: _nameController.text.trim(),
-                  isHost: true,
-                ),
-          ),
-        );
-      } else if (mounted) {
-        print('❌ فشل في إنشاء الغرفة');
-        _showErrorDialog(
-          'فشل في إنشاء الغرفة. تحقق من الاتصال بالإنترنت وحاول مرة أخرى.',
-        );
-      }
-    } catch (e) {
-      print('❌ خطأ أثناء إنشاء الغرفة: $e');
-      if (mounted) {
-        _showErrorDialog(
-          'حدث خطأ أثناء إنشاء الغرفة: $e\n\nتحقق من:\n• الاتصال بالإنترنت\n• إعدادات Firebase',
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _isCreatingRoom = false;
-        });
-      }
-    }
+    setState(() => _isCreatingRoom = false);
   }
 
   void _joinRoom() async {
@@ -322,7 +273,7 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
                             ),
                             const SizedBox(height: 15),
                             const Text(
-                              'أدخل اسمك أولاً، ثم اضغط على إنشاء غرفة لإنشاء كود جديد',
+                              'أدخل اسمك أولاً، ثم اضغط على إعدادات الغرفة لتخصيص اللعبة',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 14,
@@ -345,10 +296,10 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
                               child: const Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.add),
+                                  Icon(Icons.settings),
                                   SizedBox(width: 8),
                                   Text(
-                                    'إنشاء غرفة',
+                                    'إعدادات الغرفة',
                                     style: TextStyle(
                                       fontSize: 16,
                                       fontWeight: FontWeight.bold,
@@ -503,7 +454,7 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
                             ),
                             SizedBox(height: 10),
                             Text(
-                              '• لإنشاء غرفة جديدة: أدخل اسمك فقط واضغط "إنشاء غرفة"\n'
+                              '• لإنشاء غرفة جديدة: أدخل اسمك واضغط "إعدادات الغرفة" لتخصيص اللعبة\n'
                               '• للانضمام لغرفة موجودة: أدخل اسمك وكود الغرفة\n'
                               '• شارك كود الغرفة مع أصدقائك بعد إنشائها\n'
                               '• انتظر حتى ينضم جميع اللاعبين وابدأ اللعب!',

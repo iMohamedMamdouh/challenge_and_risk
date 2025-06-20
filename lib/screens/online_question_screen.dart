@@ -2,7 +2,9 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import '../models/game_room.dart';
 import '../models/question.dart';
+import '../services/firebase_service.dart';
 import 'online_challenge_screen.dart';
 import 'online_result_screen.dart';
 
@@ -21,8 +23,8 @@ class OnlineQuestionScreen extends StatefulWidget {
 }
 
 class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
-  // مؤقتاً - بيانات تجريبية
-  List<Map<String, dynamic>> _players = [];
+  final FirebaseService _firebaseService = FirebaseService();
+  GameRoom? _currentRoom;
   List<Question> _questions = [];
   int _currentQuestionIndex = 0;
   int _currentPlayerIndex = 0;
@@ -31,56 +33,77 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
   int? _selectedAnswerIndex;
   final Random _random = Random();
 
+  // نظام الدوران الجديد
+  List<int> _availablePlayerIndices = []; // اللاعبين المتاحين في الجولة الحالية
+  int _currentRound = 1; // رقم الجولة الحالية
+
   @override
   void initState() {
     super.initState();
-    _initializeGame();
-    // TODO: إضافة استماع لتغييرات اللعبة من Firebase
-    // _listenToGameUpdates();
+    _listenToGameUpdates();
   }
 
-  void _initializeGame() {
-    // محاكاة بيانات اللاعبين
-    setState(() {
-      _players = [
-        {'id': '1', 'name': widget.playerName, 'score': 0, 'isOnline': true},
-        {'id': '2', 'name': 'أحمد', 'score': 0, 'isOnline': true},
-        {'id': '3', 'name': 'فاطمة', 'score': 0, 'isOnline': true},
-        {'id': '4', 'name': 'سارة', 'score': 0, 'isOnline': true},
-      ];
+  void _listenToGameUpdates() {
+    _firebaseService
+        .listenToRoom(widget.roomCode)
+        .listen((room) {
+          if (room != null && mounted) {
+            setState(() {
+              _currentRoom = room;
+              if (_questions.isEmpty) {
+                _questions = room.questions;
+              }
+              _currentQuestionIndex = room.currentQuestionIndex;
+              _currentPlayerIndex = room.currentPlayerIndex;
+            });
 
-      // محاكاة الأسئلة
-      _questions = [
-        Question(
-          questionText: "ما هي عاصمة المملكة العربية السعودية؟",
-          options: ["الرياض", "جدة", "الدمام", "مكة المكرمة"],
-          correctAnswerIndex: 0,
-        ),
-        Question(
-          questionText: "كم عدد أيام السنة الميلادية العادية؟",
-          options: ["364", "365", "366", "367"],
-          correctAnswerIndex: 1,
-        ),
-        Question(
-          questionText: "ما هو أكبر كوكب في النظام الشمسي؟",
-          options: ["زحل", "المشتري", "نبتون", "أورانوس"],
-          correctAnswerIndex: 1,
-        ),
-        Question(
-          questionText: "ما هو أطول نهر في العالم؟",
-          options: ["النيل", "الأمازون", "الغانج", "الفرات"],
-          correctAnswerIndex: 0,
-        ),
-        Question(
-          questionText: "كم عدد قارات العالم؟",
-          options: ["5", "6", "7", "8"],
-          correctAnswerIndex: 2,
-        ),
-      ];
+            // إذا لم يتم تهيئة النظام العشوائي بعد، قم بتهيئته
+            if (_availablePlayerIndices.isEmpty && room.players.isNotEmpty) {
+              _initializeRound();
+            }
+          }
+        })
+        .onError((error) {
+          print('خطأ في تحميل بيانات اللعبة: $error');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('خطأ في تحميل بيانات اللعبة: $error'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        });
+  }
 
-      // اختيار لاعب عشوائي للبداية
-      _currentPlayerIndex = _random.nextInt(_players.length);
-    });
+  // تهيئة جولة جديدة
+  void _initializeRound() {
+    if (_currentRoom != null && _currentRoom!.players.isNotEmpty) {
+      _availablePlayerIndices = List.generate(
+        _currentRoom!.players.length,
+        (index) => index,
+      );
+      _selectRandomPlayer();
+    }
+  }
+
+  // اختيار لاعب عشوائي من المتاحين
+  void _selectRandomPlayer() {
+    if (_currentRoom == null || _currentRoom!.players.isEmpty) return;
+
+    if (_availablePlayerIndices.isEmpty) {
+      // إذا انتهت الجولة، ابدأ جولة جديدة
+      _currentRound++;
+      _initializeRound();
+      return;
+    }
+
+    // اختيار لاعب عشوائي من المتاحين
+    final randomIndex = _random.nextInt(_availablePlayerIndices.length);
+    _currentPlayerIndex = _availablePlayerIndices[randomIndex];
+
+    // إزالة اللاعب من قائمة المتاحين
+    _availablePlayerIndices.removeAt(randomIndex);
   }
 
   void _answerQuestion(int selectedAnswer) async {
@@ -101,12 +124,21 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
 
       final currentQuestion = _questions[_currentQuestionIndex];
       final isCorrect = selectedAnswer == currentQuestion.correctAnswerIndex;
-      final currentPlayer = _players[_currentPlayerIndex];
+      final currentPlayer = _currentRoom!.players[_currentPlayerIndex];
 
       if (isCorrect) {
         // إجابة صحيحة - إضافة نقطة
         setState(() {
-          _players[_currentPlayerIndex]['score']++;
+          // Update the player's score using copyWith
+          final updatedPlayers =
+              _currentRoom!.players.map((player) {
+                if (player.id == currentPlayer.id) {
+                  return player.copyWith(score: player.score + 1);
+                }
+                return player;
+              }).toList();
+
+          _currentRoom = _currentRoom!.copyWith(players: updatedPlayers);
         });
 
         _showResultDialog(true, () {
@@ -121,7 +153,7 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
               builder:
                   (context) => OnlineChallengeScreen(
                     roomCode: widget.roomCode,
-                    playerName: currentPlayer['name'],
+                    playerName: currentPlayer.name,
                     onChallengeComplete: () {
                       Navigator.pop(context);
                       _nextTurn();
@@ -200,20 +232,8 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
       // مسح الإجابة المختارة للاعب التالي
       _selectedAnswerIndex = null;
 
-      // اختيار لاعب عشوائي للدور التالي (مختلف عن اللاعب الحالي)
-      List<int> availablePlayerIndices = [];
-      for (int i = 0; i < _players.length; i++) {
-        if (i != _currentPlayerIndex) {
-          availablePlayerIndices.add(i);
-        }
-      }
-
-      if (availablePlayerIndices.isNotEmpty) {
-        _currentPlayerIndex =
-            availablePlayerIndices[_random.nextInt(
-              availablePlayerIndices.length,
-            )];
-      }
+      // اختيار اللاعب التالي من النظام الجديد
+      _selectRandomPlayer();
 
       // التحقق من انتهاء الأسئلة
       if (_currentQuestionIndex >= _questions.length - 1) {
@@ -236,8 +256,20 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
 
   void _navigateToResults() {
     // ترتيب اللاعبين حسب النقاط
-    final sortedPlayers = List<Map<String, dynamic>>.from(_players);
-    sortedPlayers.sort(
+    final sortedPlayersData =
+        _currentRoom!.players
+            .map(
+              (player) => {
+                'id': player.id,
+                'name': player.name,
+                'score': player.score,
+                'isHost': player.isHost,
+                'isOnline': player.isOnline,
+              },
+            )
+            .toList();
+
+    sortedPlayersData.sort(
       (a, b) => (b['score'] as int).compareTo(a['score'] as int),
     );
 
@@ -247,7 +279,7 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
         builder:
             (context) => OnlineResultScreen(
               roomCode: widget.roomCode,
-              players: sortedPlayers,
+              players: sortedPlayersData,
               totalQuestions: _questions.length,
             ),
       ),
@@ -255,8 +287,9 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
   }
 
   String _getCurrentPlayerName() {
-    if (_currentPlayerIndex < _players.length) {
-      return _players[_currentPlayerIndex]['name'] ?? '';
+    if (_currentRoom != null &&
+        _currentPlayerIndex < _currentRoom!.players.length) {
+      return _currentRoom!.players[_currentPlayerIndex].name;
     }
     return '';
   }
@@ -265,7 +298,7 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
     return _getCurrentPlayerName() == widget.playerName;
   }
 
-  Widget _buildPlayerCard(Map<String, dynamic> player, bool isCurrentPlayer) {
+  Widget _buildPlayerCard(OnlinePlayer player, bool isCurrentPlayer) {
     return Container(
       width: 90,
       margin: const EdgeInsets.only(left: 8),
@@ -318,7 +351,7 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            player['name'] ?? '',
+            player.name,
             style: const TextStyle(
               color: Colors.white,
               fontSize: 11,
@@ -330,7 +363,7 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
           ),
           const SizedBox(height: 2),
           Text(
-            '${player['score'] ?? 0}',
+            '${player.score}',
             style: const TextStyle(
               color: Colors.white,
               fontSize: 14,
@@ -380,6 +413,40 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
   Widget build(BuildContext context) {
     if (_isGameFinished) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    // Check if room data is loaded
+    if (_currentRoom == null) {
+      return Scaffold(
+        backgroundColor: Colors.deepPurple.shade50,
+        appBar: AppBar(
+          title: Text(
+            'غرفة ${widget.roomCode}',
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          backgroundColor: Colors.deepPurple,
+          centerTitle: true,
+          elevation: 0,
+          automaticallyImplyLeading: false,
+        ),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(color: Colors.deepPurple),
+              SizedBox(height: 16),
+              Text(
+                'جاري تحميل بيانات الغرفة...',
+                style: TextStyle(fontSize: 16, color: Colors.deepPurple),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
     final currentQuestion =
@@ -497,6 +564,7 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
                   ),
                   minHeight: 6,
                 ),
+                const SizedBox(height: 16),
               ],
             ),
           ),
@@ -509,9 +577,9 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
-              itemCount: _players.length,
+              itemCount: _currentRoom!.players.length,
               itemBuilder: (context, index) {
-                final player = _players[index];
+                final player = _currentRoom!.players[index];
                 final isCurrentPlayer = index == _currentPlayerIndex;
                 return _buildPlayerCard(player, isCurrentPlayer);
               },

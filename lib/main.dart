@@ -2,7 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
-import 'screens/game_mode_screen.dart';
+import 'screens/splash_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,7 +36,7 @@ class ChallengeAndRiskApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'التحدي والمخاطرة',
+      title: 'Challenge and Risk',
       debugShowCheckedModeBanner: false,
 
       // دعم اللغة العربية
@@ -87,7 +87,7 @@ class ChallengeAndRiskApp extends StatelessWidget {
         ),
       ),
 
-      home: const GameModeScreen(),
+      home: const SplashScreen(),
     );
   }
 }

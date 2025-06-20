@@ -1,7 +1,7 @@
+import 'package:challenge_and_risk/screens/local_settings_screen.dart';
 import 'package:flutter/material.dart';
 
 import '../services/audio_service.dart';
-import 'home_screen.dart';
 import 'online_home_screen.dart';
 
 class GameModeScreen extends StatefulWidget {
@@ -148,9 +148,11 @@ class _GameModeScreenState extends State<GameModeScreen> {
               icon: Icons.people,
               color: Colors.blue,
               onTap: () {
-                Navigator.push(
+                Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(builder: (context) => const HomeScreen()),
+                  MaterialPageRoute(
+                    builder: (context) => const LocalSettingsScreen(),
+                  ),
                 );
               },
             ),

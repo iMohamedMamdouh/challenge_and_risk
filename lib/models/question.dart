@@ -2,11 +2,13 @@ class Question {
   final String questionText;
   final List<String> options;
   final int correctAnswerIndex;
+  final String? category;
 
   Question({
     required this.questionText,
     required this.options,
     required this.correctAnswerIndex,
+    this.category,
   });
 
   bool isCorrectAnswer(int selectedIndex) {
@@ -20,6 +22,7 @@ class Question {
       questionText: json['question'],
       options: List<String>.from(json['options']),
       correctAnswerIndex: json['correct_answer'],
+      category: json['category'],
     );
   }
 
@@ -28,6 +31,7 @@ class Question {
       'question': questionText,
       'options': options,
       'correct_answer': correctAnswerIndex,
+      'category': category,
     };
   }
 }
