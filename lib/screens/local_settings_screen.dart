@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../models/player.dart';
-import '../services/audio_service.dart';
-import 'game_mode_screen.dart';
 import 'question_screen.dart';
 
 class LocalSettingsScreen extends StatefulWidget {
@@ -13,7 +11,6 @@ class LocalSettingsScreen extends StatefulWidget {
 }
 
 class _LocalSettingsScreenState extends State<LocalSettingsScreen> {
-  final AudioService _audioService = AudioService();
   final List<TextEditingController> _controllers = [];
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = false;
@@ -46,20 +43,12 @@ class _LocalSettingsScreenState extends State<LocalSettingsScreen> {
   void initState() {
     super.initState();
     _initializeControllers();
-    _initializeAudio();
   }
 
   void _initializeControllers() {
     _controllers.clear();
     for (int i = 0; i < _playerCount; i++) {
       _controllers.add(TextEditingController());
-    }
-  }
-
-  Future<void> _initializeAudio() async {
-    await _audioService.initialize();
-    if (mounted) {
-      _audioService.playMainMenuMusic();
     }
   }
 
@@ -130,9 +119,6 @@ class _LocalSettingsScreenState extends State<LocalSettingsScreen> {
               )
               .toList();
 
-      // Stop menu music before navigating
-      _audioService.stopMusic();
-
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -158,12 +144,6 @@ class _LocalSettingsScreenState extends State<LocalSettingsScreen> {
     );
   }
 
-  void _toggleAudio() {
-    setState(() {
-      _audioService.toggleMusic();
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -182,29 +162,8 @@ class _LocalSettingsScreenState extends State<LocalSettingsScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed:
-              () => Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (context) => const GameModeScreen()),
-              ),
+          onPressed: () => Navigator.pop(context),
         ),
-        actions: [
-          Container(
-            margin: const EdgeInsets.only(left: 8),
-            child: IconButton(
-              onPressed: _toggleAudio,
-              icon: Icon(
-                _audioService.isMusicEnabled
-                    ? Icons.volume_up
-                    : Icons.volume_off,
-                color: Colors.white,
-                size: 28,
-              ),
-              tooltip:
-                  _audioService.isMusicEnabled ? 'إيقاف الصوت' : 'تشغيل الصوت',
-            ),
-          ),
-        ],
       ),
       body:
           _isLoading

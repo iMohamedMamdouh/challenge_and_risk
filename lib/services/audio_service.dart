@@ -15,9 +15,15 @@ class AudioService {
   bool _isSoundEnabled = true;
   bool _isInitialized = false;
 
+  // Music state tracking
+  String? _currentlyPlayingMusic;
+  bool _isMusicPlaying = false;
+
   // Getters
   bool get isMusicEnabled => _isMusicEnabled;
   bool get isSoundEnabled => _isSoundEnabled;
+  bool get isMusicPlaying => _isMusicPlaying;
+  String? get currentlyPlayingMusic => _currentlyPlayingMusic;
 
   // Initialize audio service
   Future<void> initialize() async {
@@ -27,6 +33,11 @@ class AudioService {
 
     // Set music player to loop
     _musicPlayer.setReleaseMode(ReleaseMode.loop);
+
+    // Listen to player state changes
+    _musicPlayer.onPlayerStateChanged.listen((PlayerState state) {
+      _isMusicPlaying = state == PlayerState.playing;
+    });
 
     _isInitialized = true;
   }
@@ -59,6 +70,9 @@ class AudioService {
 
     if (!_isMusicEnabled) {
       await stopMusic();
+    } else {
+      // عند تشغيل الموسيقى مرة أخرى، إعادة تشغيل موسيقى القائمة الرئيسية بالقوة
+      await forceRestartMainMenuMusic();
     }
 
     await _saveSettings();
@@ -75,8 +89,21 @@ class AudioService {
     if (!_isMusicEnabled) return;
 
     try {
+      // إذا كانت نفس الموسيقى تعمل بالفعل، لا تعيد تشغيلها
+      if (_currentlyPlayingMusic == musicFile && _isMusicPlaying) {
+        return;
+      }
+
+      // إيقاف أي موسيقى تعمل حالياً
       await _musicPlayer.stop();
+
+      // انتظار قصير للتأكد من إيقاف الموسيقى
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // تشغيل الموسيقى الجديدة
       await _musicPlayer.play(AssetSource('audio/music/$musicFile'));
+      _currentlyPlayingMusic = musicFile;
+      _isMusicPlaying = true;
     } catch (e) {
       print('Error playing music: $e');
     }
@@ -86,9 +113,38 @@ class AudioService {
   Future<void> stopMusic() async {
     try {
       await _musicPlayer.stop();
+      _currentlyPlayingMusic = null;
+      _isMusicPlaying = false;
     } catch (e) {
       print('Error stopping music: $e');
     }
+  }
+
+  // Pause background music
+  Future<void> pauseMusic() async {
+    try {
+      await _musicPlayer.pause();
+      _isMusicPlaying = false;
+    } catch (e) {
+      print('Error pausing music: $e');
+    }
+  }
+
+  // Resume background music
+  Future<void> resumeMusic() async {
+    if (!_isMusicEnabled) return;
+
+    try {
+      await _musicPlayer.resume();
+      _isMusicPlaying = true;
+    } catch (e) {
+      print('Error resuming music: $e');
+    }
+  }
+
+  // Check if specific music is currently playing
+  bool isPlayingMusic(String musicFile) {
+    return _currentlyPlayingMusic == musicFile && _isMusicPlaying;
   }
 
   // Play sound effect
@@ -118,6 +174,22 @@ class AudioService {
 
   Future<void> playResultsMusic() async {
     await playMusic('results_music.mp3');
+  }
+
+  // تأكد من استمرار تشغيل موسيقى القائمة الرئيسية
+  Future<void> ensureMainMenuMusicPlaying() async {
+    if (_isMusicEnabled && !isPlayingMusic('main_menu_music.mp3')) {
+      await playMainMenuMusic();
+    }
+  }
+
+  // إعادة تشغيل موسيقى القائمة الرئيسية بالقوة
+  Future<void> forceRestartMainMenuMusic() async {
+    if (_isMusicEnabled) {
+      await stopMusic();
+      await Future.delayed(const Duration(milliseconds: 100)); // انتظار قصير
+      await playMainMenuMusic();
+    }
   }
 
   // Dispose resources

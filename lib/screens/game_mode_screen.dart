@@ -11,19 +11,45 @@ class GameModeScreen extends StatefulWidget {
   State<GameModeScreen> createState() => _GameModeScreenState();
 }
 
-class _GameModeScreenState extends State<GameModeScreen> {
+class _GameModeScreenState extends State<GameModeScreen>
+    with WidgetsBindingObserver {
   final AudioService _audioService = AudioService();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initializeAudio();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // تأكد من تشغيل الموسيقى عند العودة للتطبيق
+      _audioService.ensureMainMenuMusicPlaying();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // تأكد من تشغيل الموسيقى عند العودة إلى هذه الصفحة
+    if (mounted) {
+      _audioService.ensureMainMenuMusicPlaying();
+    }
   }
 
   Future<void> _initializeAudio() async {
     await _audioService.initialize();
     if (mounted) {
-      _audioService.playMainMenuMusic();
+      await _audioService.ensureMainMenuMusicPlaying();
     }
   }
 
@@ -148,7 +174,7 @@ class _GameModeScreenState extends State<GameModeScreen> {
               icon: Icons.people,
               color: Colors.blue,
               onTap: () {
-                Navigator.pushReplacement(
+                Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => const LocalSettingsScreen(),

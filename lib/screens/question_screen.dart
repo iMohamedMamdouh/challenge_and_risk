@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 
 import '../models/player.dart';
 import '../models/question.dart';
-import '../services/audio_service.dart';
 import '../widgets/question_card.dart';
 import 'challenge_screen.dart';
 import 'result_screen.dart';
@@ -35,7 +34,6 @@ class _QuestionScreenState extends State<QuestionScreen> {
   bool _isLoading = true;
   final bool _showResult = false;
   late final int _totalQuestions; // عدد الأسئلة لكل لعبة
-  final AudioService _audioService = AudioService();
   final Random _random = Random(); // لاختيار اللاعب التالي عشوائياً
 
   // نظام الدوران الجديد
@@ -48,12 +46,7 @@ class _QuestionScreenState extends State<QuestionScreen> {
     _totalQuestions =
         widget.questionsCount ?? 10; // استخدام العدد المُمرر أو 10 كافتراضي
     _loadQuestions();
-    _initializeAudio();
     _initializeRound(); // تهيئة الجولة الأولى
-  }
-
-  Future<void> _initializeAudio() async {
-    await _audioService.initialize();
   }
 
   Future<void> _loadQuestions() async {
@@ -112,11 +105,9 @@ class _QuestionScreenState extends State<QuestionScreen> {
     if (isCorrect) {
       // إجابة صحيحة - إضافة نقطة وتشغيل صوت النجاح
       currentPlayer.addPoint();
-      _audioService.playCorrectAnswer();
       _showCorrectAnswer();
     } else {
       // إجابة خاطئة - تشغيل صوت الخطأ وإظهار التحدي
-      _audioService.playWrongAnswer();
       _showChallenge();
     }
   }
@@ -231,9 +222,6 @@ class _QuestionScreenState extends State<QuestionScreen> {
   }
 
   void _showResults() {
-    // تشغيل موسيقى النتائج
-    _audioService.playResultsMusic();
-
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
