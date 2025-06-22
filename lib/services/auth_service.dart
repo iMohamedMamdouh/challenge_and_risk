@@ -520,6 +520,71 @@ class AuthService {
     }
   }
 
+  // حذف المستخدم
+  Future<bool> deleteUser(String userId) async {
+    try {
+      // التحقق من وجود المستخدم أولاً
+      final userSnapshot = await _database.child('users').child(userId).get();
+
+      if (!userSnapshot.exists) {
+        print('❌ المستخدم غير موجود: $userId');
+        return false;
+      }
+
+      // منع حذف المستخدم الحالي
+      if (_currentUser?.id == userId) {
+        print('❌ لا يمكن حذف المستخدم الحالي');
+        return false;
+      }
+
+      // التحقق من عدد المشرفين إذا كان المستخدم مشرفاً
+      final userValue = userSnapshot.value;
+      if (userValue != null && userValue is Map<Object?, Object?>) {
+        final userData = Map<String, dynamic>.from(userValue);
+        if (userData['role'] == 'admin') {
+          // عد المشرفين المتبقين
+          final usersSnapshot = await _database.child('users').get();
+          int adminCount = 0;
+
+          if (usersSnapshot.exists) {
+            final usersValue = usersSnapshot.value;
+            if (usersValue != null && usersValue is Map<Object?, Object?>) {
+              final usersData = Map<String, dynamic>.from(usersValue);
+
+              for (String id in usersData.keys) {
+                final user = usersData[id];
+                if (user != null && user is Map<Object?, Object?>) {
+                  final userMap = Map<String, dynamic>.from(user);
+                  if (userMap['role'] == 'admin') {
+                    adminCount++;
+                  }
+                }
+              }
+            }
+          }
+
+          // إذا كان هذا هو المشرف الوحيد، منع الحذف
+          if (adminCount <= 1) {
+            print('❌ لا يمكن حذف المشرف الوحيد في النظام');
+            return false;
+          }
+        }
+      }
+
+      // حذف المستخدم من قاعدة البيانات
+      await _database.child('users').child(userId).remove();
+
+      // TODO: يمكن إضافة حذف من Firebase Auth إذا كان ضرورياً
+      // لكن هذا يتطلب صلاحيات إدارية إضافية
+
+      print('✅ تم حذف المستخدم بنجاح: $userId');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في حذف المستخدم: $e');
+      return false;
+    }
+  }
+
   // تغيير كلمة المرور
   Future<Map<String, dynamic>> changePassword(
     String currentPassword,

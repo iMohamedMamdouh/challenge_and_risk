@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/challenge.dart';
 import '../models/game_room.dart';
 import '../models/question.dart';
 
@@ -15,6 +16,13 @@ import '../models/question.dart';
 enum QuestionAddResult {
   success, // تم إضافة السؤال بنجاح
   duplicate, // السؤال موجود مسبقاً
+  error, // حدث خطأ أثناء الإضافة
+}
+
+// enum لنتائج إضافة التحديات
+enum ChallengeAddResult {
+  success, // تم إضافة التحدي بنجاح
+  duplicate, // التحدي موجود مسبقاً
   error, // حدث خطأ أثناء الإضافة
 }
 
@@ -1378,10 +1386,13 @@ class FirebaseService {
           snapshot.docs.map((doc) {
             final data = doc.data();
             return Question(
+              id: doc.id,
               questionText: data['question'] ?? '',
               options: List<String>.from(data['options'] ?? []),
               correctAnswerIndex: data['correct_answer'] ?? 0,
               category: data['category'] ?? 'معلومات عامة',
+              usageCount: data['usage_count'] ?? 0,
+              source: data['source'] ?? 'firebase',
             );
           }).toList();
 
@@ -1443,10 +1454,13 @@ class FirebaseService {
           snapshot.docs.map((doc) {
             final data = doc.data();
             return Question(
+              id: doc.id,
               questionText: data['question'] ?? '',
               options: List<String>.from(data['options'] ?? []),
               correctAnswerIndex: data['correct_answer'] ?? 0,
               category: data['category'] ?? 'معلومات عامة',
+              usageCount: data['usage_count'] ?? 0,
+              source: data['source'] ?? 'firebase',
             );
           }).toList();
 
@@ -1512,6 +1526,11 @@ class FirebaseService {
       print('🔍 جاري فحص الأسئلة الموجودة في Firebase...');
       final existingSnapshot = await _firestore.collection('questions').get();
 
+      // تحميل الأسئلة المحذوفة من Firebase
+      print('🗑️ جاري فحص الأسئلة المحذوفة...');
+      final deletedSnapshot =
+          await _firestore.collection('deleted_questions').get();
+
       // إنشاء مجموعة من الأسئلة الموجودة للمقارنة السريعة
       final existingQuestions = <String>{};
       for (final doc in existingSnapshot.docs) {
@@ -1523,18 +1542,39 @@ class FirebaseService {
         }
       }
 
+      // إنشاء مجموعة من الأسئلة المحذوفة للتحقق منها
+      final deletedQuestions = <String>{};
+      for (final doc in deletedSnapshot.docs) {
+        final data = doc.data();
+        final questionText = data['question_text'] as String? ?? '';
+        if (questionText.isNotEmpty) {
+          deletedQuestions.add(_normalizeQuestionText(questionText));
+        }
+      }
+
       print(
         '📊 تم العثور على ${existingQuestions.length} سؤال موجود في Firebase',
       );
+      print('🗑️ تم العثور على ${deletedQuestions.length} سؤال محذوف');
 
       int successCount = 0;
       int duplicateCount = 0;
+      int deletedCount = 0;
       int errorCount = 0;
 
       for (final questionData in jsonData) {
         try {
           final questionText = questionData['question'] as String? ?? '';
           final normalizedText = _normalizeQuestionText(questionText);
+
+          // فحص ما إذا كان السؤال محذوف مسبقاً
+          if (deletedQuestions.contains(normalizedText)) {
+            print(
+              '🗑️ تم تخطي سؤال محذوف مسبقاً: ${questionText.substring(0, 50)}...',
+            );
+            deletedCount++;
+            continue;
+          }
 
           // فحص ما إذا كان السؤال موجود مسبقاً
           if (existingQuestions.contains(normalizedText)) {
@@ -1543,7 +1583,7 @@ class FirebaseService {
             continue;
           }
 
-          // رفع السؤال إذا لم يكن موجوداً
+          // رفع السؤال إذا لم يكن موجوداً أو محذوفاً
           await _firestore.collection('questions').add({
             'question': questionText,
             'options': questionData['options'],
@@ -1571,6 +1611,7 @@ class FirebaseService {
       print('📊 نتائج الرفع:');
       print('   ✅ أسئلة جديدة: $successCount');
       print('   ⏭️ أسئلة مكررة: $duplicateCount');
+      print('   🗑️ أسئلة محذوفة مسبقاً: $deletedCount');
       print('   ❌ أخطاء: $errorCount');
       print('   📝 إجمالي الأسئلة المعالجة: ${jsonData.length}');
 
@@ -2021,8 +2062,31 @@ class FirebaseService {
     try {
       print('🗑️ جاري حذف السؤال: $questionId');
 
+      // الحصول على بيانات السؤال قبل حذفه
+      final questionDoc =
+          await _firestore.collection('questions').doc(questionId).get();
+      if (!questionDoc.exists) {
+        print('❌ السؤال غير موجود');
+        return false;
+      }
+
+      final questionData = questionDoc.data()!;
+      final questionText = questionData['question'] as String;
+      final questionHash = _generateQuestionHash(questionText);
+
+      // حذف السؤال من مجموعة الأسئلة
       await _firestore.collection('questions').doc(questionId).delete();
-      print('✅ تم حذف السؤال بنجاح');
+
+      // إضافة السؤال المحذوف إلى مجموعة الأسئلة المحذوفة لمنع إعادة رفعه
+      await _firestore.collection('deleted_questions').add({
+        'question_id': questionId,
+        'question_text': questionText,
+        'question_hash': questionHash,
+        'deleted_at': FieldValue.serverTimestamp(),
+        'deleted_by': 'admin', // يمكن تحسين هذا لاحقاً لإضافة معرف المشرف
+      });
+
+      print('✅ تم حذف السؤال بنجاح وإضافته لقائمة المحذوفات');
       return true;
     } catch (e) {
       print('❌ خطأ في حذف السؤال: $e');
@@ -2169,6 +2233,726 @@ class FirebaseService {
         'oldest_question': null,
         'newest_question': null,
       };
+    }
+  }
+
+  /// استعادة سؤال محذوف (إزالته من قائمة المحذوفات)
+  Future<bool> restoreDeletedQuestion(String questionText) async {
+    try {
+      print('🔄 جاري استعادة السؤال المحذوف...');
+
+      final normalizedText = _normalizeQuestionText(questionText);
+
+      // البحث عن السؤال في قائمة المحذوفات
+      final deletedSnapshot =
+          await _firestore
+              .collection('deleted_questions')
+              .where(
+                'question_hash',
+                isEqualTo: _generateQuestionHash(questionText),
+              )
+              .get();
+
+      if (deletedSnapshot.docs.isEmpty) {
+        print('❌ السؤال غير موجود في قائمة المحذوفات');
+        return false;
+      }
+
+      // حذف السؤال من قائمة المحذوفات
+      for (final doc in deletedSnapshot.docs) {
+        await doc.reference.delete();
+      }
+
+      print('✅ تم استعادة السؤال من قائمة المحذوفات');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في استعادة السؤال: $e');
+      return false;
+    }
+  }
+
+  /// الحصول على قائمة الأسئلة المحذوفة
+  Future<List<Map<String, dynamic>>> getDeletedQuestions() async {
+    try {
+      print('📋 جاري تحميل قائمة الأسئلة المحذوفة...');
+
+      final snapshot =
+          await _firestore
+              .collection('deleted_questions')
+              .orderBy('deleted_at', descending: true)
+              .get();
+
+      final deletedQuestions =
+          snapshot.docs.map((doc) {
+            final data = doc.data();
+            return {
+              'id': doc.id,
+              'question_text': data['question_text'] ?? '',
+              'deleted_at': data['deleted_at'],
+              'deleted_by': data['deleted_by'] ?? 'unknown',
+            };
+          }).toList();
+
+      print('✅ تم تحميل ${deletedQuestions.length} سؤال محذوف');
+      return deletedQuestions;
+    } catch (e) {
+      print('❌ خطأ في تحميل الأسئلة المحذوفة: $e');
+      return [];
+    }
+  }
+
+  /// تنظيف قائمة الأسئلة المحذوفة (حذف السجلات القديمة)
+  Future<bool> cleanupDeletedQuestions({int daysOld = 30}) async {
+    try {
+      print('🧹 جاري تنظيف قائمة الأسئلة المحذوفة...');
+
+      final cutoffDate = DateTime.now().subtract(Duration(days: daysOld));
+      final snapshot =
+          await _firestore
+              .collection('deleted_questions')
+              .where('deleted_at', isLessThan: Timestamp.fromDate(cutoffDate))
+              .get();
+
+      int deletedCount = 0;
+      for (final doc in snapshot.docs) {
+        await doc.reference.delete();
+        deletedCount++;
+      }
+
+      print('✅ تم حذف $deletedCount سجل قديم من قائمة المحذوفات');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في تنظيف قائمة المحذوفات: $e');
+      return false;
+    }
+  }
+
+  // ===== إدارة التحديات =====
+
+  /// تحميل التحديات من Firebase
+  Future<List<Challenge>> loadChallengesFromFirebase({int count = 10}) async {
+    try {
+      print('🎯 جاري تحميل التحديات من Firebase...');
+
+      final snapshot = await _firestore.collection('challenges').get();
+
+      if (snapshot.docs.isEmpty) {
+        print('⚠️ لا توجد تحديات في Firebase');
+        return [];
+      }
+
+      final challenges =
+          snapshot.docs.map((doc) {
+            final data = doc.data();
+            return Challenge(
+              id: doc.id,
+              challengeText: data['challenge'] ?? '',
+              category: data['category'] ?? 'تحديات عامة',
+              difficulty: data['difficulty'] ?? 'متوسط',
+              usageCount: data['usage_count'] ?? 0,
+              source: data['source'] ?? 'firebase',
+            );
+          }).toList();
+
+      // خلط التحديات واختيار العدد المطلوب
+      final random = Random();
+      challenges.shuffle(random);
+      final selectedChallenges = challenges.take(count).toList();
+
+      print('✅ تم تحميل ${selectedChallenges.length} تحدي من Firebase');
+      return selectedChallenges;
+    } catch (e) {
+      print('❌ خطأ في تحميل التحديات من Firebase: $e');
+      return [];
+    }
+  }
+
+  /// تحميل التحديات حسب الفئة
+  Future<List<Challenge>> loadChallengesByCategory(
+    String category, {
+    int count = 10,
+  }) async {
+    try {
+      print('🎯 جاري تحميل تحديات فئة: $category');
+
+      final snapshot =
+          await _firestore
+              .collection('challenges')
+              .where('category', isEqualTo: category)
+              .get();
+
+      if (snapshot.docs.isEmpty) {
+        print('⚠️ لا توجد تحديات في فئة $category، جاري تحميل جميع التحديات');
+        return await loadChallengesFromFirebase(count: count);
+      }
+
+      final challenges =
+          snapshot.docs.map((doc) {
+            final data = doc.data();
+            return Challenge(
+              id: doc.id,
+              challengeText: data['challenge'] ?? '',
+              category: data['category'] ?? 'تحديات عامة',
+              difficulty: data['difficulty'] ?? 'متوسط',
+              usageCount: data['usage_count'] ?? 0,
+              source: data['source'] ?? 'firebase',
+            );
+          }).toList();
+
+      // خلط التحديات واختيار العدد المطلوب
+      final random = Random();
+      challenges.shuffle(random);
+      final selectedChallenges = challenges.take(count).toList();
+
+      print('✅ تم تحميل ${selectedChallenges.length} تحدي من فئة $category');
+      return selectedChallenges;
+    } catch (e) {
+      print('❌ خطأ في تحميل تحديات الفئة $category: $e');
+      return await loadChallengesFromFirebase(count: count);
+    }
+  }
+
+  /// إضافة تحدي جديد
+  Future<ChallengeAddResult> addChallenge(Challenge challenge) async {
+    try {
+      print('➕ جاري إضافة تحدي جديد...');
+
+      // فحص عدم وجود التحدي مسبقاً
+      final normalizedText = _normalizeQuestionText(challenge.challengeText);
+
+      print('🔍 جاري فحص عدم تكرار التحدي...');
+      final existingQuery =
+          await _firestore
+              .collection('challenges')
+              .where(
+                'challenge_hash',
+                isEqualTo: _generateQuestionHash(challenge.challengeText),
+              )
+              .get();
+
+      if (existingQuery.docs.isNotEmpty) {
+        print('⚠️ التحدي موجود مسبقاً في قاعدة البيانات');
+        return ChallengeAddResult.duplicate;
+      }
+
+      // فحص إضافي بالبحث في نص التحدي
+      final allChallengesSnapshot =
+          await _firestore.collection('challenges').get();
+      for (final doc in allChallengesSnapshot.docs) {
+        final data = doc.data();
+        final existingChallengeText = data['challenge'] as String? ?? '';
+        if (_normalizeQuestionText(existingChallengeText) == normalizedText) {
+          print(
+            '⚠️ تم العثور على تحدي مشابه: ${existingChallengeText.substring(0, 50)}...',
+          );
+          return ChallengeAddResult.duplicate;
+        }
+      }
+
+      // إضافة التحدي إذا لم يكن موجوداً
+      await _firestore.collection('challenges').add({
+        'challenge': challenge.challengeText,
+        'category': challenge.category,
+        'difficulty': challenge.difficulty,
+        'created_at': FieldValue.serverTimestamp(),
+        'usage_count': 0,
+        'source': 'manual_add',
+        'challenge_hash': _generateQuestionHash(challenge.challengeText),
+      });
+
+      print('✅ تم إضافة التحدي بنجاح');
+      return ChallengeAddResult.success;
+    } catch (e) {
+      print('❌ خطأ في إضافة التحدي: $e');
+      return ChallengeAddResult.error;
+    }
+  }
+
+  /// حذف تحدي معين
+  Future<bool> deleteChallenge(String challengeId) async {
+    try {
+      print('🗑️ جاري حذف التحدي: $challengeId');
+
+      // الحصول على بيانات التحدي قبل حذفه
+      final challengeDoc =
+          await _firestore.collection('challenges').doc(challengeId).get();
+      if (!challengeDoc.exists) {
+        print('❌ التحدي غير موجود');
+        return false;
+      }
+
+      final challengeData = challengeDoc.data()!;
+      final challengeText = challengeData['challenge'] as String;
+      final challengeHash = _generateQuestionHash(challengeText);
+
+      // حذف التحدي من مجموعة التحديات
+      await _firestore.collection('challenges').doc(challengeId).delete();
+
+      // إضافة التحدي المحذوف إلى مجموعة التحديات المحذوفة
+      await _firestore.collection('deleted_challenges').add({
+        'challenge_id': challengeId,
+        'challenge_text': challengeText,
+        'challenge_hash': challengeHash,
+        'deleted_at': FieldValue.serverTimestamp(),
+        'deleted_by': 'admin',
+      });
+
+      print('✅ تم حذف التحدي بنجاح وإضافته لقائمة المحذوفات');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في حذف التحدي: $e');
+      return false;
+    }
+  }
+
+  /// تحديث تحدي معين
+  Future<bool> updateChallenge(
+    String challengeId,
+    Challenge updatedChallenge,
+  ) async {
+    try {
+      print('🔄 جاري تحديث التحدي: $challengeId');
+
+      await _firestore.collection('challenges').doc(challengeId).update({
+        'challenge': updatedChallenge.challengeText,
+        'category': updatedChallenge.category,
+        'difficulty': updatedChallenge.difficulty,
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+
+      print('✅ تم تحديث التحدي بنجاح');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في تحديث التحدي: $e');
+      return false;
+    }
+  }
+
+  /// البحث في التحديات
+  Future<List<Map<String, dynamic>>> searchChallenges(String searchTerm) async {
+    try {
+      print('🔍 البحث عن: $searchTerm');
+
+      final snapshot = await _firestore.collection('challenges').get();
+      final searchTermLower = searchTerm.toLowerCase();
+
+      final results =
+          snapshot.docs
+              .where((doc) {
+                final data = doc.data();
+                final challenge =
+                    (data['challenge'] as String? ?? '').toLowerCase();
+                final category =
+                    (data['category'] as String? ?? '').toLowerCase();
+
+                return challenge.contains(searchTermLower) ||
+                    category.contains(searchTermLower);
+              })
+              .map((doc) {
+                final data = doc.data();
+                return {
+                  'id': doc.id,
+                  'challenge': data['challenge'] ?? '',
+                  'category': data['category'] ?? 'تحديات عامة',
+                  'difficulty': data['difficulty'] ?? 'متوسط',
+                  'created_at': data['created_at'],
+                  'usage_count': data['usage_count'] ?? 0,
+                  'source': data['source'] ?? 'unknown',
+                };
+              })
+              .toList();
+
+      print('✅ تم العثور على ${results.length} نتيجة');
+      return results;
+    } catch (e) {
+      print('❌ خطأ في البحث: $e');
+      return [];
+    }
+  }
+
+  /// الحصول على التحديات حسب الفئة مع تفاصيل إضافية
+  Future<List<Map<String, dynamic>>> getChallengesByCategory(
+    String categoryName,
+  ) async {
+    try {
+      print('🎯 جاري تحميل تحديات فئة: $categoryName');
+
+      final snapshot =
+          await _firestore
+              .collection('challenges')
+              .where('category', isEqualTo: categoryName)
+              .get();
+
+      final challenges =
+          snapshot.docs.map((doc) {
+            final data = doc.data();
+            return {
+              'id': doc.id,
+              'challenge': data['challenge'] ?? '',
+              'category': data['category'] ?? 'تحديات عامة',
+              'difficulty': data['difficulty'] ?? 'متوسط',
+              'created_at': data['created_at'],
+              'usage_count': data['usage_count'] ?? 0,
+              'source': data['source'] ?? 'unknown',
+            };
+          }).toList();
+
+      // ترتيب التحديات حسب تاريخ الإنشاء (الأحدث أولاً)
+      challenges.sort((a, b) {
+        final aTime = a['created_at'] as Timestamp?;
+        final bTime = b['created_at'] as Timestamp?;
+
+        if (aTime == null && bTime == null) return 0;
+        if (aTime == null) return 1;
+        if (bTime == null) return -1;
+
+        return bTime.compareTo(aTime);
+      });
+
+      print('✅ تم تحميل ${challenges.length} تحدي من فئة $categoryName');
+      return challenges;
+    } catch (e) {
+      print('❌ خطأ في تحميل تحديات الفئة: $e');
+      return [];
+    }
+  }
+
+  /// الحصول على جميع التحديات
+  Future<List<Map<String, dynamic>>> getAllChallenges() async {
+    try {
+      print('🎯 جاري تحميل جميع التحديات...');
+
+      final snapshot =
+          await _firestore
+              .collection('challenges')
+              .orderBy('created_at', descending: true)
+              .get();
+
+      final challenges =
+          snapshot.docs.map((doc) {
+            final data = doc.data();
+            return {
+              'id': doc.id,
+              'challenge': data['challenge'] ?? '',
+              'category': data['category'] ?? 'تحديات عامة',
+              'difficulty': data['difficulty'] ?? 'متوسط',
+              'created_at': data['created_at'],
+              'usage_count': data['usage_count'] ?? 0,
+              'source': data['source'] ?? 'unknown',
+            };
+          }).toList();
+
+      print('✅ تم تحميل ${challenges.length} تحدي');
+      return challenges;
+    } catch (e) {
+      print('❌ خطأ في تحميل التحديات: $e');
+      return [];
+    }
+  }
+
+  /// تحديث عداد استخدام التحدي
+  Future<void> incrementChallengeUsage(String challengeId) async {
+    try {
+      await _firestore.collection('challenges').doc(challengeId).update({
+        'usage_count': FieldValue.increment(1),
+        'last_used': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      print('❌ خطأ في تحديث عداد الاستخدام: $e');
+    }
+  }
+
+  /// الحصول على إحصائيات التحديات
+  Future<Map<String, dynamic>> getChallengesStats() async {
+    try {
+      final snapshot = await _firestore.collection('challenges').get();
+
+      int totalChallenges = snapshot.docs.length;
+      int totalUsage = 0;
+      final categoryStats = <String, int>{};
+      final difficultyStats = <String, int>{};
+
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final usage = data['usage_count'] as int? ?? 0;
+        final category = data['category'] as String? ?? 'غير محدد';
+        final difficulty = data['difficulty'] as String? ?? 'متوسط';
+
+        totalUsage += usage;
+        categoryStats[category] = (categoryStats[category] ?? 0) + 1;
+        difficultyStats[difficulty] = (difficultyStats[difficulty] ?? 0) + 1;
+      }
+
+      return {
+        'total_challenges': totalChallenges,
+        'total_usage': totalUsage,
+        'categories': categoryStats,
+        'difficulties': difficultyStats,
+      };
+    } catch (e) {
+      print('❌ خطأ في الحصول على إحصائيات التحديات: $e');
+      return {
+        'total_challenges': 0,
+        'total_usage': 0,
+        'categories': {},
+        'difficulties': {},
+      };
+    }
+  }
+
+  /// الحصول على قائمة التحديات المحذوفة
+  Future<List<Map<String, dynamic>>> getDeletedChallenges() async {
+    try {
+      print('📋 جاري تحميل قائمة التحديات المحذوفة...');
+
+      final snapshot =
+          await _firestore
+              .collection('deleted_challenges')
+              .orderBy('deleted_at', descending: true)
+              .get();
+
+      final deletedChallenges =
+          snapshot.docs.map((doc) {
+            final data = doc.data();
+            return {
+              'id': doc.id,
+              'challenge_text': data['challenge_text'] ?? '',
+              'deleted_at': data['deleted_at'],
+              'deleted_by': data['deleted_by'] ?? 'unknown',
+            };
+          }).toList();
+
+      print('✅ تم تحميل ${deletedChallenges.length} تحدي محذوف');
+      return deletedChallenges;
+    } catch (e) {
+      print('❌ خطأ في تحميل التحديات المحذوفة: $e');
+      return [];
+    }
+  }
+
+  /// استعادة تحدي محذوف
+  Future<bool> restoreDeletedChallenge(String challengeText) async {
+    try {
+      print('🔄 جاري استعادة التحدي المحذوف...');
+
+      // البحث عن التحدي في قائمة المحذوفات
+      final deletedSnapshot =
+          await _firestore
+              .collection('deleted_challenges')
+              .where(
+                'challenge_hash',
+                isEqualTo: _generateQuestionHash(challengeText),
+              )
+              .get();
+
+      if (deletedSnapshot.docs.isEmpty) {
+        print('❌ التحدي غير موجود في قائمة المحذوفات');
+        return false;
+      }
+
+      // حذف التحدي من قائمة المحذوفات
+      for (final doc in deletedSnapshot.docs) {
+        await doc.reference.delete();
+      }
+
+      print('✅ تم استعادة التحدي من قائمة المحذوفات');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في استعادة التحدي: $e');
+      return false;
+    }
+  }
+
+  /// رفع التحديات المحلية إلى Firebase (للمشرفين)
+  Future<bool> uploadLocalChallengesToFirebase() async {
+    try {
+      print('📤 جاري رفع التحديات المحلية إلى Firebase...');
+
+      // تحميل التحديات المحلية
+      final String response = await rootBundle.loadString(
+        'assets/data/challenges.json',
+      );
+      final List<dynamic> jsonData = json.decode(response);
+
+      // تحميل التحديات الموجودة في Firebase للمقارنة
+      print('🔍 جاري فحص التحديات الموجودة في Firebase...');
+      final existingSnapshot = await _firestore.collection('challenges').get();
+
+      // تحميل التحديات المحذوفة من Firebase
+      print('🗑️ جاري فحص التحديات المحذوفة...');
+      final deletedSnapshot =
+          await _firestore.collection('deleted_challenges').get();
+
+      // إنشاء مجموعة من التحديات الموجودة للمقارنة السريعة
+      final existingChallenges = <String>{};
+      for (final doc in existingSnapshot.docs) {
+        final data = doc.data();
+        final challengeText = data['challenge'] as String? ?? '';
+        if (challengeText.isNotEmpty) {
+          // استخدام نص التحدي كمعرف فريد (بعد تنظيفه)
+          existingChallenges.add(_normalizeChallengeText(challengeText));
+        }
+      }
+
+      // إنشاء مجموعة من التحديات المحذوفة للتحقق منها
+      final deletedChallenges = <String>{};
+      for (final doc in deletedSnapshot.docs) {
+        final data = doc.data();
+        final challengeText = data['challenge'] as String? ?? '';
+        if (challengeText.isNotEmpty) {
+          deletedChallenges.add(_normalizeChallengeText(challengeText));
+        }
+      }
+
+      print(
+        '📊 تم العثور على ${existingChallenges.length} تحدي موجود في Firebase',
+      );
+      print('🗑️ تم العثور على ${deletedChallenges.length} تحدي محذوف');
+
+      int successCount = 0;
+      int duplicateCount = 0;
+      int deletedCount = 0;
+      int errorCount = 0;
+
+      // معالجة التحديات من الملف المحلي
+      for (int i = 0; i < jsonData.length; i++) {
+        try {
+          final challengeText = jsonData[i] as String? ?? '';
+          if (challengeText.isEmpty) continue;
+
+          final normalizedText = _normalizeChallengeText(challengeText);
+
+          // فحص ما إذا كان التحدي محذوف مسبقاً
+          if (deletedChallenges.contains(normalizedText)) {
+            print(
+              '🗑️ تم تخطي تحدي محذوف مسبقاً: ${challengeText.substring(0, 50)}...',
+            );
+            deletedCount++;
+            continue;
+          }
+
+          // فحص ما إذا كان التحدي موجود مسبقاً
+          if (existingChallenges.contains(normalizedText)) {
+            print('⏭️ تم تخطي تحدي مكرر: ${challengeText.substring(0, 50)}...');
+            duplicateCount++;
+            continue;
+          }
+
+          // تحديد الفئة والصعوبة بناءً على محتوى التحدي
+          final category = _categorizeChallengeText(challengeText);
+          final difficulty = _determineDifficulty(challengeText);
+
+          // رفع التحدي إذا لم يكن موجوداً أو محذوفاً
+          await _firestore.collection('challenges').add({
+            'challenge': challengeText,
+            'category': category,
+            'difficulty': difficulty,
+            'created_at': FieldValue.serverTimestamp(),
+            'usage_count': 0,
+            'source': 'local_upload',
+            'challenge_hash': _generateChallengeHash(challengeText),
+          });
+
+          // إضافة التحدي للمجموعة لتجنب التكرار في نفس العملية
+          existingChallenges.add(normalizedText);
+          successCount++;
+
+          print('✅ تم رفع تحدي جديد: ${challengeText.substring(0, 50)}...');
+        } catch (e) {
+          print('❌ خطأ في رفع تحدي: $e');
+          errorCount++;
+        }
+      }
+
+      print('📊 نتائج الرفع:');
+      print('   ✅ تحديات جديدة: $successCount');
+      print('   ⏭️ تحديات مكررة: $duplicateCount');
+      print('   🗑️ تحديات محذوفة مسبقاً: $deletedCount');
+      print('   ❌ أخطاء: $errorCount');
+      print('   📝 إجمالي التحديات المعالجة: ${jsonData.length}');
+
+      return successCount > 0;
+    } catch (e) {
+      print('❌ خطأ في رفع التحديات: $e');
+      return false;
+    }
+  }
+
+  /// تطبيع نص التحدي للمقارنة (إزالة المسافات الزائدة وتوحيد الحالة)
+  String _normalizeChallengeText(String text) {
+    return text
+        .trim()
+        .replaceAll(RegExp(r'\s+'), ' ') // استبدال عدة مسافات بمسافة واحدة
+        .toLowerCase(); // تحويل للأحرف الصغيرة للمقارنة
+  }
+
+  /// إنشاء hash للتحدي لضمان الفرادة
+  String _generateChallengeHash(String challengeText) {
+    return challengeText.hashCode.toString();
+  }
+
+  /// تصنيف التحدي تلقائياً بناءً على محتواه
+  String _categorizeChallengeText(String challengeText) {
+    final text = challengeText.toLowerCase();
+
+    if (text.contains('رقص') ||
+        text.contains('ارقص') ||
+        text.contains('تحرك')) {
+      return 'تحديات حركية';
+    } else if (text.contains('غن') ||
+        text.contains('اغن') ||
+        text.contains('صوت') ||
+        text.contains('قلد')) {
+      return 'تحديات مضحكة';
+    } else if (text.contains('ضغط') ||
+        text.contains('تمارين') ||
+        text.contains('امش') ||
+        text.contains('قف')) {
+      return 'تحديات حركية';
+    } else if (text.contains('عد') ||
+        text.contains('احسب') ||
+        text.contains('الأبجدية')) {
+      return 'تحديات فكرية';
+    } else if (text.contains('ارسم') ||
+        text.contains('تخيل') ||
+        text.contains('اطبخ')) {
+      return 'تحديات إبداعية';
+    } else if (text.contains('مساج') ||
+        text.contains('للجميع') ||
+        text.contains('الآخرين')) {
+      return 'تحديات جماعية';
+    } else if (text.contains('30 ثانية') ||
+        text.contains('سريع') ||
+        text.contains('20 مرة')) {
+      return 'تحديات سريعة';
+    } else if (text.contains('صعب') ||
+        text.contains('مغمض العينين') ||
+        text.contains('بدون')) {
+      return 'تحديات صعبة';
+    } else {
+      return 'تحديات عامة';
+    }
+  }
+
+  /// تحديد صعوبة التحدي تلقائياً
+  String _determineDifficulty(String challengeText) {
+    final text = challengeText.toLowerCase();
+
+    if (text.contains('مغمض العينين') ||
+        text.contains('بدون') ||
+        text.contains('صعب') ||
+        text.contains('دقيقتين') ||
+        text.contains('الأبجدية بالعكس')) {
+      return 'صعب';
+    } else if (text.contains('تمارين') ||
+        text.contains('ضغط') ||
+        text.contains('دقيقة') ||
+        text.contains('20 مرة') ||
+        text.contains('تقليد') ||
+        text.contains('درامات')) {
+      return 'متوسط';
+    } else {
+      return 'سهل';
     }
   }
 }
