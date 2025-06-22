@@ -1,7 +1,8 @@
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class AudioService {
+class AudioService extends ChangeNotifier {
   static final AudioService _instance = AudioService._internal();
   factory AudioService() => _instance;
   AudioService._internal();
@@ -36,10 +37,24 @@ class AudioService {
 
     // Listen to player state changes
     _musicPlayer.onPlayerStateChanged.listen((PlayerState state) {
+      bool wasPlaying = _isMusicPlaying;
       _isMusicPlaying = state == PlayerState.playing;
+
+      // إشعار الواجهة عند تغيير الحالة
+      if (wasPlaying != _isMusicPlaying) {
+        notifyListeners();
+      }
     });
 
     _isInitialized = true;
+
+    // تشغيل الموسيقى فقط إذا كانت مُفعلة في الإعدادات المحفوظة
+    if (_isMusicEnabled) {
+      await playMainMenuMusic();
+    }
+
+    // إشعار الواجهة بالحالة الأولية
+    notifyListeners();
   }
 
   // Load settings from SharedPreferences
@@ -66,16 +81,24 @@ class AudioService {
 
   // Toggle music on/off
   Future<void> toggleMusic() async {
-    _isMusicEnabled = !_isMusicEnabled;
+    try {
+      _isMusicEnabled = !_isMusicEnabled;
 
-    if (!_isMusicEnabled) {
-      await stopMusic();
-    } else {
-      // عند تشغيل الموسيقى مرة أخرى، إعادة تشغيل موسيقى القائمة الرئيسية بالقوة
-      await forceRestartMainMenuMusic();
+      if (!_isMusicEnabled) {
+        await stopMusic();
+      } else {
+        // عند تشغيل الموسيقى مرة أخرى، إعادة تشغيل موسيقى القائمة الرئيسية
+        await playMainMenuMusic();
+      }
+
+      await _saveSettings();
+      notifyListeners();
+    } catch (e) {
+      print('Error toggling music: $e');
+      // في حالة الخطأ، استرجاع الحالة السابقة
+      _isMusicEnabled = !_isMusicEnabled;
+      notifyListeners();
     }
-
-    await _saveSettings();
   }
 
   // Toggle sound effects on/off
@@ -89,34 +112,49 @@ class AudioService {
     if (!_isMusicEnabled) return;
 
     try {
-      // إذا كانت نفس الموسيقى تعمل بالفعل، لا تعيد تشغيلها
+      // إذا كانت نفس الموسيقى تعمل بالفعل والتشغيل لا يزال نشطاً، لا تعيد تشغيلها
       if (_currentlyPlayingMusic == musicFile && _isMusicPlaying) {
+        print('الموسيقى $musicFile تعمل بالفعل - تخطي إعادة التشغيل');
         return;
       }
+
+      print('بدء تشغيل الموسيقى: $musicFile');
 
       // إيقاف أي موسيقى تعمل حالياً
       await _musicPlayer.stop();
 
-      // انتظار قصير للتأكد من إيقاف الموسيقى
-      await Future.delayed(const Duration(milliseconds: 50));
+      await _musicPlayer.setVolume(0.50);
 
-      // تشغيل الموسيقى الجديدة
+      // تشغيل الموسيقى الجديدة مباشرة
       await _musicPlayer.play(AssetSource('audio/music/$musicFile'));
       _currentlyPlayingMusic = musicFile;
       _isMusicPlaying = true;
+      notifyListeners();
+
+      print('تم تشغيل الموسيقى بنجاح: $musicFile');
     } catch (e) {
       print('Error playing music: $e');
+      _currentlyPlayingMusic = null;
+      _isMusicPlaying = false;
+      notifyListeners();
     }
   }
 
   // Stop background music
   Future<void> stopMusic() async {
     try {
+      print('إيقاف الموسيقى...');
       await _musicPlayer.stop();
       _currentlyPlayingMusic = null;
       _isMusicPlaying = false;
+      notifyListeners();
+      print('تم إيقاف الموسيقى بنجاح');
     } catch (e) {
       print('Error stopping music: $e');
+      // حتى في حالة الخطأ، نظف الحالة
+      _currentlyPlayingMusic = null;
+      _isMusicPlaying = false;
+      notifyListeners();
     }
   }
 
@@ -125,6 +163,8 @@ class AudioService {
     try {
       await _musicPlayer.pause();
       _isMusicPlaying = false;
+      notifyListeners();
+      print('تم إيقاف الموسيقى مؤقتاً');
     } catch (e) {
       print('Error pausing music: $e');
     }
@@ -137,6 +177,8 @@ class AudioService {
     try {
       await _musicPlayer.resume();
       _isMusicPlaying = true;
+      notifyListeners();
+      print('تم استئناف الموسيقى');
     } catch (e) {
       print('Error resuming music: $e');
     }
@@ -148,11 +190,13 @@ class AudioService {
   }
 
   // Play sound effect
-  Future<void> playSound(String soundFile) async {
+  Future<void> playSound(String soundFile, {double volume = 1.0}) async {
     if (!_isSoundEnabled) return;
 
     try {
       await _soundPlayer.stop();
+      // تعيين مستوى الصوت المطلوب
+      await _soundPlayer.setVolume(volume);
       await _soundPlayer.play(AssetSource('audio/sounds/$soundFile'));
     } catch (e) {
       print('Error playing sound: $e');
@@ -161,11 +205,13 @@ class AudioService {
 
   // Specific sound methods
   Future<void> playCorrectAnswer() async {
-    await playSound('correct_answer.mp3');
+    // مستوى صوت طبيعي للإجابة الصحيحة
+    await playSound('correct_answer.mp3', volume: 0.8);
   }
 
   Future<void> playWrongAnswer() async {
-    await playSound('wrong_answer.mp3');
+    // مستوى صوت عالي جداً للإجابة الخاطئة لجذب الانتباه
+    await playSound('wrong_answer.mp3', volume: 1.0);
   }
 
   Future<void> playMainMenuMusic() async {
@@ -178,6 +224,7 @@ class AudioService {
 
   // تأكد من استمرار تشغيل موسيقى القائمة الرئيسية
   Future<void> ensureMainMenuMusicPlaying() async {
+    // تشغيل الموسيقى فقط إذا كانت مُفعلة وليست تعمل بالفعل
     if (_isMusicEnabled && !isPlayingMusic('main_menu_music.mp3')) {
       await playMainMenuMusic();
     }
@@ -187,14 +234,29 @@ class AudioService {
   Future<void> forceRestartMainMenuMusic() async {
     if (_isMusicEnabled) {
       await stopMusic();
-      await Future.delayed(const Duration(milliseconds: 100)); // انتظار قصير
       await playMainMenuMusic();
     }
   }
 
+  // إيقاف كامل للصوت عند الخروج من التطبيق
+  Future<void> stopAllAudio() async {
+    try {
+      await _musicPlayer.stop();
+      await _soundPlayer.stop();
+      _isMusicPlaying = false;
+      _currentlyPlayingMusic = null;
+      notifyListeners();
+      print('تم إيقاف جميع الأصوات');
+    } catch (e) {
+      print('Error stopping all audio: $e');
+    }
+  }
+
   // Dispose resources
+  @override
   Future<void> dispose() async {
     await _musicPlayer.dispose();
     await _soundPlayer.dispose();
+    super.dispose();
   }
 }

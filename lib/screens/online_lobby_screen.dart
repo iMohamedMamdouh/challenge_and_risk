@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../models/game_room.dart';
 import '../services/firebase_service.dart';
+import 'home_screen.dart'; // Added import for HomeScreen
 import 'online_question_screen.dart';
 import 'room_settings_screen.dart';
 
@@ -12,20 +13,23 @@ class OnlineLobbyScreen extends StatefulWidget {
   final String roomCode;
   final String playerName;
   final bool isHost;
+  final int timerDuration;
 
   const OnlineLobbyScreen({
     super.key,
     required this.roomCode,
     required this.playerName,
     required this.isHost,
+    required this.timerDuration,
   });
 
   @override
   State<OnlineLobbyScreen> createState() => _OnlineLobbyScreenState();
 }
 
-class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
-  final _firebaseService = FirebaseService();
+class _OnlineLobbyScreenState extends State<OnlineLobbyScreen>
+    with WidgetsBindingObserver {
+  final FirebaseService _firebaseService = FirebaseService();
   GameRoom? _currentRoom;
   StreamSubscription<GameRoom?>? _roomSubscription;
   bool _isLoading = false;
@@ -34,16 +38,67 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
   @override
   void initState() {
     super.initState();
-    _listenToRoomChanges();
+    // إضافة مراقب حالة التطبيق
+    WidgetsBinding.instance.addObserver(this);
+
+    _setupRoomListener();
+    _firebaseService.startInactivityMonitoring(widget.roomCode);
+    _firebaseService.startPeriodicCleanup(
+      widget.roomCode,
+    ); // التنظيف الدوري (إزالة اللاعبين المنقطعين معطلة)
+    // تحديث حالة اللاعب كمتصل عند دخول الصفحة
+    _firebaseService.updatePlayerStatus(widget.roomCode, true);
   }
 
   @override
   void dispose() {
+    // إزالة مراقب حالة التطبيق
+    WidgetsBinding.instance.removeObserver(this);
+
+    // تحديث حالة اللاعب كغير متصل عند مغادرة الصفحة
+    _firebaseService.updatePlayerStatus(widget.roomCode, false);
+
+    // إيقاف مراقبة عدم النشاط والتنظيف الدوري
+    _firebaseService.stopInactivityMonitoring();
+    _firebaseService.stopPeriodicCleanup();
+
     _roomSubscription?.cancel();
     super.dispose();
   }
 
-  void _listenToRoomChanges() {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+
+    switch (state) {
+      case AppLifecycleState.resumed:
+        // عندما يعود المستخدم للتطبيق، حدث حالته كمتصل
+        print('📱 التطبيق عاد للمقدمة - تحديث حالة الاتصال');
+        _firebaseService.updatePlayerStatus(widget.roomCode, true);
+        _firebaseService.startInactivityMonitoring(widget.roomCode);
+        break;
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+        // عندما يذهب التطبيق للخلفية أو يصبح غير نشط، حدث حالته كغير متصل
+        print('📴 التطبيق ذهب للخلفية - تحديث حالة الاتصال');
+        _firebaseService.updatePlayerStatus(widget.roomCode, false);
+        _firebaseService.stopInactivityMonitoring();
+        break;
+      case AppLifecycleState.detached:
+        // عندما يتم إغلاق التطبيق تماماً
+        print('🔴 التطبيق تم إغلاقه - تحديث حالة الاتصال');
+        _firebaseService.updatePlayerStatus(widget.roomCode, false);
+        _firebaseService.stopInactivityMonitoring();
+        break;
+      case AppLifecycleState.hidden:
+        // حالة مخفية (Android 10+)
+        print('👁️ التطبيق مخفي - تحديث حالة الاتصال');
+        _firebaseService.updatePlayerStatus(widget.roomCode, false);
+        break;
+    }
+  }
+
+  void _setupRoomListener() {
     _roomSubscription = _firebaseService
         .listenToRoom(widget.roomCode)
         .listen(
@@ -98,6 +153,7 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
                         (context) => OnlineQuestionScreen(
                           roomCode: widget.roomCode,
                           playerName: widget.playerName,
+                          timerDuration: widget.timerDuration,
                         ),
                   ),
                 );
@@ -137,6 +193,81 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
   void _startGame() async {
     if (!widget.isHost || (_currentRoom?.players.length ?? 0) < 2) return;
 
+    // التحقق من أن جميع اللاعبين متصلين
+    final offlinePlayers =
+        _currentRoom?.players.where((player) => !player.isOnline).toList() ??
+        [];
+
+    if (offlinePlayers.isNotEmpty) {
+      // عرض رسالة تحذيرية مع أسماء اللاعبين غير المتصلين
+      final offlineNames = offlinePlayers.map((p) => p.name).join('، ');
+
+      showDialog(
+        context: context,
+        builder:
+            (context) => AlertDialog(
+              title: Row(
+                children: [
+                  Icon(Icons.warning, color: Colors.orange.shade600, size: 28),
+                  const SizedBox(width: 10),
+                  const Text('تحذير'),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'لا يمكن بدء اللعبة لوجود لاعبين غير متصلين:',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.orange.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.person_off,
+                          color: Colors.orange.shade600,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            offlineNames,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.orange.shade800,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  const Text(
+                    'يمكنك طرد اللاعبين غير المتصلين أو انتظار عودتهم.',
+                    style: TextStyle(fontSize: 14, color: Colors.grey),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('موافق'),
+                ),
+              ],
+            ),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
@@ -170,7 +301,7 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
     // العلم تم تعيينه مسبقاً في الكود الذي يستدعي هذه الدالة
     try {
       print('🚪 بدء مغادرة الغرفة من واجهة المستخدم...');
-      await _firebaseService.leaveRoom(widget.roomCode);
+      await _firebaseService.permanentLeaveRoom(widget.roomCode);
       print('✅ تم ترك الغرفة بنجاح');
     } catch (e) {
       print('⚠️ خطأ أثناء مغادرة الغرفة: $e');
@@ -185,9 +316,12 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
         );
       }
     } finally {
-      // العودة للصفحة السابقة (شاشة الانضمام) بدلاً من الصفحة الرئيسية
+      // العودة للصفحة الرئيسية (صفحة اختيار نوع اللعب)
       if (mounted) {
-        Navigator.pop(context);
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const HomeScreen()),
+          (route) => false,
+        );
       }
     }
   }
@@ -196,7 +330,7 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
     // العلم تم تعيينه مسبقاً في PopScope أو عند الاستدعاء المباشر
     try {
       print('🔙 العودة للإعدادات - مغادرة الغرفة أولاً...');
-      await _firebaseService.leaveRoom(widget.roomCode);
+      await _firebaseService.permanentLeaveRoom(widget.roomCode);
       print('✅ تم ترك الغرفة بنجاح');
     } catch (e) {
       print('⚠️ خطأ أثناء مغادرة الغرفة: $e');
@@ -224,11 +358,93 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
     }
   }
 
+  // دالة طرد اللاعب (للمضيف فقط)
+  Future<void> _kickPlayer(OnlinePlayer player) async {
+    try {
+      // تأكيد الطرد
+      final shouldKick = await showDialog<bool>(
+        context: context,
+        builder:
+            (context) => AlertDialog(
+              title: const Text('طرد اللاعب'),
+              content: Text(
+                'هل أنت متأكد من أنك تريد طرد "${player.name}" من الغرفة؟',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('إلغاء'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('طرد'),
+                ),
+              ],
+            ),
+      );
+
+      if (shouldKick == true) {
+        // عرض مؤشر التحميل
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder:
+              (context) => const Center(child: CircularProgressIndicator()),
+        );
+
+        // تنفيذ الطرد
+        final success = await _firebaseService.kickPlayer(
+          widget.roomCode,
+          player.id,
+        );
+
+        if (mounted) {
+          Navigator.of(context).pop(); // إغلاق مؤشر التحميل
+
+          if (success) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('تم طرد "${player.name}" من الغرفة'),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('فشل في طرد اللاعب'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        // التأكد من إغلاق أي حوار مفتوح
+        if (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ في طرد اللاعب: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final canStart = widget.isHost && (_currentRoom?.players.length ?? 0) >= 2;
     final players = _currentRoom?.players ?? [];
     final maxPlayers = _currentRoom?.maxPlayers ?? 4;
+    final allPlayersOnline = players.every((player) => player.isOnline);
+    final canStart = widget.isHost && players.length >= 2 && allPlayersOnline;
 
     return PopScope(
       canPop: false,
@@ -243,7 +459,7 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
             _isManuallyLeaving = true; // تعيين العلم قبل مغادرة الغرفة
             try {
               print('🚪 مغادرة الغرفة عبر زر الرجوع...');
-              await _firebaseService.leaveRoom(widget.roomCode);
+              await _firebaseService.permanentLeaveRoom(widget.roomCode);
               print('✅ تم ترك الغرفة بنجاح');
             } catch (e) {
               print('⚠️ خطأ أثناء مغادرة الغرفة: $e');
@@ -477,14 +693,18 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
                                     Icon(
                                       canStart
                                           ? Icons.play_arrow
-                                          : Icons.hourglass_empty,
+                                          : players.length < 2
+                                          ? Icons.hourglass_empty
+                                          : Icons.wifi_off,
                                       size: 24,
                                     ),
                                     const SizedBox(width: 10),
                                     Text(
                                       canStart
                                           ? 'ابدأ اللعبة'
-                                          : 'انتظار المزيد من اللاعبين...',
+                                          : players.length < 2
+                                          ? 'انتظار المزيد من اللاعبين...'
+                                          : 'يوجد لاعبون غير متصلين',
                                       style: const TextStyle(
                                         fontSize: 18,
                                         fontWeight: FontWeight.bold,
@@ -579,6 +799,9 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
   Widget _buildPlayerCard(OnlinePlayer player) {
     final bool isHost = player.isHost;
     final bool isOnline = player.isOnline;
+    final bool canKick =
+        widget.isHost &&
+        !player.isHost; // المضيف يمكنه طرد اللاعبين العاديين فقط
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -715,15 +938,17 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      isOnline ? 'متصل الآن' : 'غير متصل',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color:
-                            isOnline
-                                ? Colors.green.shade700
-                                : Colors.grey.shade600,
-                        fontWeight: FontWeight.w500,
+                    Expanded(
+                      child: Text(
+                        isOnline ? 'متصل الآن' : 'غير متصل',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color:
+                              isOnline
+                                  ? Colors.green.shade700
+                                  : Colors.grey.shade600,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ),
                   ],
@@ -731,6 +956,57 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen> {
               ],
             ),
           ),
+          // زر الطرد للمضيف فقط
+          if (canKick) ...[
+            const SizedBox(width: 12),
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.red.shade400, Colors.red.shade600],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(10),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.red.withOpacity(0.3),
+                    spreadRadius: 1,
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => _kickPlayer(player),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.person_remove,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 6),
+                        const Text(
+                          'طرد',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

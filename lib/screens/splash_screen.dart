@@ -1,8 +1,6 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
-import 'game_mode_screen.dart';
+import 'home_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -13,48 +11,44 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with TickerProviderStateMixin {
-  late AnimationController _fadeController;
-  late AnimationController _scaleController;
-  late Animation<double> _fadeAnimation;
+  late AnimationController _controller;
   late Animation<double> _scaleAnimation;
+  late Animation<double> _fadeAnimation;
 
   @override
   void initState() {
     super.initState();
 
-    // إعداد الرسوم المتحركة
-    _fadeController = AnimationController(
-      duration: const Duration(milliseconds: 1500),
+    // إنشاء الأنيميشن
+    _controller = AnimationController(
+      duration: const Duration(seconds: 3),
       vsync: this,
     );
-
-    _scaleController = AnimationController(
-      duration: const Duration(milliseconds: 2000),
-      vsync: this,
-    );
-
-    _fadeAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(parent: _fadeController, curve: Curves.easeIn));
 
     _scaleAnimation = Tween<double>(begin: 0.5, end: 1.0).animate(
-      CurvedAnimation(parent: _scaleController, curve: Curves.elasticOut),
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.0, 0.7, curve: Curves.elasticOut),
+      ),
     );
 
-    // بدء الرسوم المتحركة
-    _fadeController.forward();
-    _scaleController.forward();
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.0, 0.5, curve: Curves.easeIn),
+      ),
+    );
 
-    // الانتقال للشاشة الرئيسية بعد 3 ثوان
-    Timer(const Duration(seconds: 3), () {
+    // بدء الأنيميشن
+    _controller.forward();
+
+    // الانتقال للشاشة الرئيسية بعد 3 ثوانٍ
+    Future.delayed(const Duration(seconds: 3), () {
       if (mounted) {
-        Navigator.pushReplacement(
-          context,
+        Navigator.of(context).pushReplacement(
           PageRouteBuilder(
             pageBuilder:
-                (context, animation, secondaryAnimation) =>
-                    const GameModeScreen(),
+                (context, animation, secondaryAnimation) => const HomeScreen(),
             transitionsBuilder: (
               context,
               animation,
@@ -63,7 +57,7 @@ class _SplashScreenState extends State<SplashScreen>
             ) {
               return FadeTransition(opacity: animation, child: child);
             },
-            transitionDuration: const Duration(milliseconds: 500),
+            transitionDuration: const Duration(milliseconds: 1000),
           ),
         );
       }
@@ -72,141 +66,148 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   void dispose() {
-    _fadeController.dispose();
-    _scaleController.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.deepPurple,
       body: Container(
-        width: double.infinity,
-        height: double.infinity,
         decoration: BoxDecoration(
           gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
             colors: [
               Colors.deepPurple.shade400,
               Colors.deepPurple.shade600,
               Colors.deepPurple.shade800,
             ],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
           ),
         ),
-        child: AnimatedBuilder(
-          animation: _fadeController,
-          builder: (context, child) {
-            return FadeTransition(
-              opacity: _fadeAnimation,
-              child: ScaleTransition(
-                scale: _scaleAnimation,
+        child: SafeArea(
+          child: Stack(
+            children: [
+              // محتوى الشاشة
+              Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // شعار التطبيق - يملأ معظم الشاشة
-                    Expanded(
-                      flex: 6,
-                      child: Container(
-                        padding: const EdgeInsets.all(40),
-                        child: Hero(
-                          tag: 'app_logo',
-                          child: Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(30),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.3),
-                                  spreadRadius: 10,
-                                  blurRadius: 30,
-                                  offset: const Offset(0, 10),
+                    // Logo مع الأنيميشن
+                    AnimatedBuilder(
+                      animation: _controller,
+                      builder: (context, child) {
+                        return FadeTransition(
+                          opacity: _fadeAnimation,
+                          child: ScaleTransition(
+                            scale: _scaleAnimation,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.white.withOpacity(0.3),
+                                    spreadRadius: 10,
+                                    blurRadius: 20,
+                                    offset: const Offset(0, 0),
+                                  ),
+                                ],
+                              ),
+                              child: ClipOval(
+                                child: Image.asset(
+                                  'assets/images/logo.png',
+                                  width: 150,
+                                  height: 150,
+                                  fit: BoxFit.cover,
                                 ),
-                              ],
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(30),
-                              child: Image.asset(
-                                'assets/images/logo.png',
-                                fit: BoxFit.contain,
-                                width: double.infinity,
-                                height: double.infinity,
                               ),
                             ),
                           ),
+                        );
+                      },
+                    ),
+
+                    const SizedBox(height: 40),
+
+                    // اسم التطبيق
+                    FadeTransition(
+                      opacity: _fadeAnimation,
+                      child: const Text(
+                        'التحدي والمخاطرة',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          letterSpacing: 2,
                         ),
                       ),
                     ),
 
-                    // اسم التطبيق
-                    Expanded(
-                      flex: 2,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Text(
-                            'التحدي والمخاطرة',
-                            style: TextStyle(
-                              fontSize: 32,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              shadows: [
-                                Shadow(
-                                  color: Colors.black26,
-                                  offset: Offset(2, 2),
-                                  blurRadius: 4,
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          const Text(
-                            'Challenge and Risk',
-                            style: TextStyle(
-                              fontSize: 18,
-                              color: Colors.white70,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(height: 30),
+                    const SizedBox(height: 16),
 
-                          // مؤشر التحميل
-                          SizedBox(
-                            width: 40,
-                            height: 40,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 3,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.white.withOpacity(0.8),
-                              ),
-                            ),
-                          ),
-                        ],
+                    // وصف
+                    FadeTransition(
+                      opacity: _fadeAnimation,
+                      child: Text(
+                        'لعبة أسئلة وتحديات ممتعة',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.white.withOpacity(0.8),
+                        ),
                       ),
                     ),
 
-                    // معلومات إضافية
-                    Expanded(
-                      flex: 1,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          Text(
-                            'جاري التحميل...',
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: Colors.white.withOpacity(0.9),
-                              fontWeight: FontWeight.w400,
-                            ),
+                    const SizedBox(height: 60),
+
+                    // مؤشر التحميل
+                    FadeTransition(
+                      opacity: _fadeAnimation,
+                      child: const SizedBox(
+                        width: 50,
+                        height: 50,
+                        child: CircularProgressIndicator(
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
                           ),
-                          const SizedBox(height: 20),
-                        ],
+                          strokeWidth: 3,
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
-            );
-          },
+
+              // معلومات في الأسفل
+              Positioned(
+                bottom: 40,
+                left: 0,
+                right: 0,
+                child: FadeTransition(
+                  opacity: _fadeAnimation,
+                  child: Column(
+                    children: [
+                      Text(
+                        'جاري التحميل...',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.7),
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'الإصدار 1.0.0',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.5),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

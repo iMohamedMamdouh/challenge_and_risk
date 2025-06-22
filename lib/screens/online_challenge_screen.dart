@@ -2,6 +2,8 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import '../services/firebase_service.dart';
+
 class OnlineChallengeScreen extends StatefulWidget {
   final String roomCode;
   final String playerName;
@@ -22,8 +24,10 @@ class _OnlineChallengeScreenState extends State<OnlineChallengeScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
   late Animation<double> _scaleAnimation;
+  final FirebaseService _firebaseService = FirebaseService();
   String _challenge = '';
   bool _isLoading = true;
+  bool _isCompleting = false;
 
   final List<String> _challenges = [
     "ارقص لمدة 30 ثانية",
@@ -79,9 +83,63 @@ class _OnlineChallengeScreenState extends State<OnlineChallengeScreen>
     _animationController.forward();
   }
 
-  void _completeChallenge() {
-    // TODO: إرسال إشعار إكمال التحدي إلى Firebase
-    widget.onChallengeComplete();
+  void _completeChallenge() async {
+    if (_isCompleting) return;
+
+    setState(() => _isCompleting = true);
+
+    try {
+      print('🎯 بدء إكمال التحدي...');
+
+      // إزالة حالة التحدي من Firebase
+      final success = await _firebaseService.completeChallenge(widget.roomCode);
+
+      if (success) {
+        print('✅ تم إكمال التحدي بنجاح');
+
+        // عرض رسالة نجاح
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.white),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'تم إكمال التحدي بنجاح!',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+
+        // العودة لشاشة الأسئلة
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (mounted) {
+          widget.onChallengeComplete();
+        }
+      } else {
+        throw Exception('فشل في إكمال التحدي');
+      }
+    } catch (e) {
+      print('❌ خطأ في إكمال التحدي: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ في إكمال التحدي: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCompleting = false);
+      }
+    }
   }
 
   @override
@@ -264,9 +322,10 @@ class _OnlineChallengeScreenState extends State<OnlineChallengeScreen>
 
                     // Complete button
                     ElevatedButton(
-                      onPressed: _completeChallenge,
+                      onPressed: _isCompleting ? null : _completeChallenge,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
+                        backgroundColor:
+                            _isCompleting ? Colors.grey : Colors.green,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 40,
@@ -275,22 +334,47 @@ class _OnlineChallengeScreenState extends State<OnlineChallengeScreen>
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(25),
                         ),
-                        elevation: 5,
+                        elevation: _isCompleting ? 2 : 5,
                       ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.check_circle, size: 24),
-                          SizedBox(width: 10),
-                          Text(
-                            'تم التنفيذ!',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
+                      child:
+                          _isCompleting
+                              ? Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  const Text(
+                                    'جاري الإنهاء...',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              )
+                              : const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.check_circle, size: 24),
+                                  SizedBox(width: 10),
+                                  Text(
+                                    'تم التنفيذ!',
+                                    style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
                     ),
 
                     const SizedBox(height: 20),

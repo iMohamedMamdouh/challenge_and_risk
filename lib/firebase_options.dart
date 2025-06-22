@@ -49,6 +49,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '456425651664',
     projectId: 'challenge-and-risk',
     authDomain: 'challenge-and-risk.firebaseapp.com',
+    databaseURL: 'https://challenge-and-risk-default-rtdb.firebaseio.com/',
     storageBucket: 'challenge-and-risk.firebasestorage.app',
   );
 
@@ -57,6 +58,8 @@ class DefaultFirebaseOptions {
     appId: '1:456425651664:android:e6ed77b71c5b4ba09c0dd5',
     messagingSenderId: '456425651664',
     projectId: 'challenge-and-risk',
+    authDomain: 'challenge-and-risk.firebaseapp.com',
+    databaseURL: 'https://challenge-and-risk-default-rtdb.firebaseio.com/',
     storageBucket: 'challenge-and-risk.firebasestorage.app',
   );
 
@@ -65,6 +68,8 @@ class DefaultFirebaseOptions {
     appId: '1:456425651664:ios:your_ios_app_id',
     messagingSenderId: '456425651664',
     projectId: 'challenge-and-risk',
+    authDomain: 'challenge-and-risk.firebaseapp.com',
+    databaseURL: 'https://challenge-and-risk-default-rtdb.firebaseio.com/',
     storageBucket: 'challenge-and-risk.firebasestorage.app',
     iosBundleId: 'com.example.challengeAndRisk',
   );
@@ -74,6 +79,8 @@ class DefaultFirebaseOptions {
     appId: '1:456425651664:macos:your_macos_app_id',
     messagingSenderId: '456425651664',
     projectId: 'challenge-and-risk',
+    authDomain: 'challenge-and-risk.firebaseapp.com',
+    databaseURL: 'https://challenge-and-risk-default-rtdb.firebaseio.com/',
     storageBucket: 'challenge-and-risk.firebasestorage.app',
     iosBundleId: 'com.example.challengeAndRisk',
   );

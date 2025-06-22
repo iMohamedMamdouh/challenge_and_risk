@@ -16,6 +16,9 @@ class GameRoom {
   final int currentPlayerIndex;
   final DateTime createdAt;
   final String? currentChallenge;
+  final String? winner;
+  final String? endReason;
+  final int? timerDuration;
 
   GameRoom({
     required this.id,
@@ -28,28 +31,33 @@ class GameRoom {
     required this.currentPlayerIndex,
     required this.createdAt,
     this.currentChallenge,
+    this.winner,
+    this.endReason,
+    this.timerDuration,
   });
 
   factory GameRoom.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+    final data = doc.data();
+    if (data == null || data is! Map<String, dynamic>) {
+      throw Exception('بيانات الغرفة تالفة أو فارغة');
+    }
+
     return GameRoom(
       id: doc.id,
       hostId: data['hostId'] ?? '',
-      players:
-          (data['players'] as List<dynamic>?)
-              ?.map((p) => OnlinePlayer.fromMap(p))
-              .toList() ??
-          [],
-      maxPlayers: data['maxPlayers'] ?? 2,
+      maxPlayers: data['maxPlayers'] ?? 4,
       state: GameState.values[data['state'] ?? 0],
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      players:
+          (data['players'] as List<dynamic>? ?? [])
+              .map((p) => OnlinePlayer.fromMap(p as Map<String, dynamic>))
+              .toList(),
       questions:
-          (data['questions'] as List<dynamic>?)
-              ?.map((q) => Question.fromJson(q))
-              .toList() ??
-          [],
+          (data['questions'] as List<dynamic>? ?? [])
+              .map((q) => Question.fromJson(q as Map<String, dynamic>))
+              .toList(),
       currentQuestionIndex: data['currentQuestionIndex'] ?? 0,
       currentPlayerIndex: data['currentPlayerIndex'] ?? 0,
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       currentChallenge: data['currentChallenge'],
     );
   }
@@ -66,6 +74,9 @@ class GameRoom {
       'currentPlayerIndex': currentPlayerIndex,
       'createdAt': Timestamp.fromDate(createdAt),
       'currentChallenge': currentChallenge,
+      'winner': winner,
+      'endReason': endReason,
+      'timerDuration': timerDuration,
     };
   }
 
@@ -80,6 +91,9 @@ class GameRoom {
     int? currentPlayerIndex,
     DateTime? createdAt,
     String? currentChallenge,
+    String? winner,
+    String? endReason,
+    int? timerDuration,
   }) {
     return GameRoom(
       id: id ?? this.id,
@@ -92,6 +106,9 @@ class GameRoom {
       currentPlayerIndex: currentPlayerIndex ?? this.currentPlayerIndex,
       createdAt: createdAt ?? this.createdAt,
       currentChallenge: currentChallenge ?? this.currentChallenge,
+      winner: winner ?? this.winner,
+      endReason: endReason ?? this.endReason,
+      timerDuration: timerDuration ?? this.timerDuration,
     );
   }
 
@@ -107,6 +124,7 @@ class GameRoom {
 
 class OnlinePlayer extends Player {
   final int? selectedAnswer;
+  final DateTime? lastSeen;
 
   OnlinePlayer({
     required super.id,
@@ -115,6 +133,7 @@ class OnlinePlayer extends Player {
     super.isHost = false,
     super.isOnline = true,
     this.selectedAnswer,
+    this.lastSeen,
   });
 
   factory OnlinePlayer.fromMap(Map<String, dynamic> map) {
@@ -125,6 +144,10 @@ class OnlinePlayer extends Player {
       isHost: map['isHost'] ?? false,
       isOnline: map['isOnline'] ?? true,
       selectedAnswer: map['selectedAnswer'],
+      lastSeen:
+          map['lastSeen'] != null
+              ? (map['lastSeen'] as Timestamp).toDate()
+              : null,
     );
   }
 
@@ -136,6 +159,7 @@ class OnlinePlayer extends Player {
       'isHost': isHost,
       'isOnline': isOnline,
       'selectedAnswer': selectedAnswer,
+      'lastSeen': lastSeen != null ? Timestamp.fromDate(lastSeen!) : null,
     };
   }
 
@@ -146,6 +170,7 @@ class OnlinePlayer extends Player {
     bool? isHost,
     bool? isOnline,
     int? selectedAnswer,
+    DateTime? lastSeen,
   }) {
     return OnlinePlayer(
       id: id ?? this.id,
@@ -154,6 +179,7 @@ class OnlinePlayer extends Player {
       isHost: isHost ?? this.isHost,
       isOnline: isOnline ?? this.isOnline,
       selectedAnswer: selectedAnswer ?? this.selectedAnswer,
+      lastSeen: lastSeen ?? this.lastSeen,
     );
   }
 }

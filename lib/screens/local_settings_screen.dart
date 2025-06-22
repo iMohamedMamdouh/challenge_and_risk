@@ -19,9 +19,13 @@ class _LocalSettingsScreenState extends State<LocalSettingsScreen> {
   int _playerCount = 2;
   int _selectedQuestionCount = 10;
   List<String> _selectedCategories = ['جميع الفئات'];
+  int _selectedTimerDuration = 10; // المدة بالثواني لكل سؤال
 
   // خيارات عدد الأسئلة
   final List<int> _questionCounts = [10, 15, 20];
+
+  // خيارات المدة الزمنية (بالثواني)
+  final List<int> _timerDurations = [0, 5, 10, 15, 20];
 
   // خيارات عدد اللاعبين
   final List<int> _maxPlayersOptions = [2, 3, 4, 5, 6, 7, 8];
@@ -127,6 +131,7 @@ class _LocalSettingsScreenState extends State<LocalSettingsScreen> {
                 players: players,
                 questionsCount: _selectedQuestionCount,
                 selectedCategories: _selectedCategories,
+                timerDuration: _selectedTimerDuration,
               ),
         ),
       );
@@ -350,6 +355,74 @@ class _LocalSettingsScreenState extends State<LocalSettingsScreen> {
 
                       const SizedBox(height: 20),
 
+                      // Timer Duration Selection
+                      _buildSectionCard(
+                        title: 'مدة السؤال',
+                        icon: Icons.timer,
+                        child: Column(
+                          children: [
+                            const Text(
+                              'اختر المدة الزمنية لكل سؤال',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            const SizedBox(height: 15),
+                            Wrap(
+                              runSpacing: 8,
+                              spacing: 8,
+                              children:
+                                  _timerDurations.map((duration) {
+                                    final isSelected =
+                                        _selectedTimerDuration == duration;
+                                    return _buildTimerDurationChip(
+                                      duration,
+                                      isSelected,
+                                    );
+                                  }).toList(),
+                            ),
+                            const SizedBox(height: 15),
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.shade50,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: Colors.orange.shade200,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _selectedTimerDuration == 0
+                                        ? Icons.timer_off
+                                        : Icons.access_time,
+                                    color: Colors.orange.shade600,
+                                    size: 18,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      _selectedTimerDuration == 0
+                                          ? 'المدة المختارة: بدون وقت محدد'
+                                          : 'المدة المختارة: $_selectedTimerDuration ثانية لكل سؤال',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.orange.shade800,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 20),
+
                       // Max Players Selection
                       _buildSectionCard(
                         title: 'عدد اللاعبين',
@@ -526,6 +599,12 @@ class _LocalSettingsScreenState extends State<LocalSettingsScreen> {
                             _buildSummaryRow(
                               'عدد الأسئلة',
                               '$_selectedQuestionCount سؤال',
+                            ),
+                            _buildSummaryRow(
+                              'مدة السؤال',
+                              _selectedTimerDuration == 0
+                                  ? 'بدون وقت'
+                                  : '$_selectedTimerDuration ثانية',
                             ),
                             _buildSummaryRow(
                               'عدد اللاعبين',
@@ -735,6 +814,71 @@ class _LocalSettingsScreenState extends State<LocalSettingsScreen> {
                 fontWeight: FontWeight.bold,
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimerDurationChip(int duration, bool isSelected) {
+    return GestureDetector(
+      onTap: () => setState(() => _selectedTimerDuration = duration),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors:
+                isSelected
+                    ? [Colors.orange.shade400, Colors.orange.shade600]
+                    : [Colors.grey.shade100, Colors.grey.shade200],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(25),
+          border: Border.all(
+            color: isSelected ? Colors.orange.shade700 : Colors.grey.shade300,
+            width: 2,
+          ),
+          boxShadow:
+              isSelected
+                  ? [
+                    BoxShadow(
+                      color: Colors.orange.withOpacity(0.3),
+                      spreadRadius: 1,
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                  : [],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              duration == 0 ? Icons.timer_off : Icons.timer,
+              color: isSelected ? Colors.white : Colors.grey.shade600,
+              size: 18,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              duration == 0 ? 'بدون' : '$duration',
+              style: TextStyle(
+                color: isSelected ? Colors.white : Colors.grey.shade700,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            if (duration > 0) ...[
+              const SizedBox(width: 4),
+              Text(
+                'ث',
+                style: TextStyle(
+                  color: isSelected ? Colors.white70 : Colors.grey.shade600,
+                  fontSize: 12,
+                ),
+              ),
+            ],
           ],
         ),
       ),

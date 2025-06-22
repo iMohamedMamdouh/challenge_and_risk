@@ -3,12 +3,22 @@ import 'package:flutter/material.dart';
 import '../models/player.dart';
 import '../services/audio_service.dart';
 import '../widgets/player_score_tile.dart';
-import 'game_mode_screen.dart';
+import 'home_screen.dart';
+import 'question_screen.dart';
 
 class ResultScreen extends StatefulWidget {
   final List<Player> players;
+  final int? questionsCount;
+  final List<String>? selectedCategories;
+  final int? timerDuration;
 
-  const ResultScreen({super.key, required this.players});
+  const ResultScreen({
+    super.key,
+    required this.players,
+    this.questionsCount,
+    this.selectedCategories,
+    this.timerDuration,
+  });
 
   @override
   State<ResultScreen> createState() => _ResultScreenState();
@@ -99,7 +109,15 @@ class _ResultScreenState extends State<ResultScreen>
 
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(builder: (context) => const GameModeScreen()),
+      MaterialPageRoute(
+        builder:
+            (context) => QuestionScreen(
+              players: widget.players,
+              questionsCount: widget.questionsCount,
+              selectedCategories: widget.selectedCategories,
+              timerDuration: widget.timerDuration,
+            ),
+      ),
       (route) => false,
     );
   }
@@ -443,7 +461,7 @@ class _ResultScreenState extends State<ResultScreen>
                               Navigator.pushAndRemoveUntil(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) => const GameModeScreen(),
+                                  builder: (context) => const HomeScreen(),
                                 ),
                                 (route) => false,
                               );

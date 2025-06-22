@@ -1,13 +1,22 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/game_room.dart';
 import '../models/question.dart';
+
+// enum لنتائج إضافة الأسئلة
+enum QuestionAddResult {
+  success, // تم إضافة السؤال بنجاح
+  duplicate, // السؤال موجود مسبقاً
+  error, // حدث خطأ أثناء الإضافة
+}
 
 class FirebaseService {
   static final FirebaseService _instance = FirebaseService._internal();
@@ -25,6 +34,11 @@ class FirebaseService {
     _currentUserId ??= _uuid.v4();
     return _currentUserId!;
   }
+
+  // مفاتيح SharedPreferences للغرفة الأخيرة
+  static const String _lastRoomCodeKey = 'last_room_code';
+  static const String _lastPlayerNameKey = 'last_player_name';
+  static const String _lastIsHostKey = 'last_is_host';
 
   // التأكد من تهيئة Firebase
   void _ensureFirebaseInitialized() {
@@ -51,22 +65,8 @@ class FirebaseService {
 
   // Load questions from assets
   Future<List<Question>> _loadQuestions({int count = 10}) async {
-    try {
-      final String response = await rootBundle.loadString(
-        'assets/data/questions.json',
-      );
-      final List<dynamic> data = json.decode(response);
-      final List<Question> allQuestions =
-          data.map((json) => Question.fromJson(json)).toList();
-
-      // Shuffle and take specified number of questions
-      final random = Random();
-      allQuestions.shuffle(random);
-      return allQuestions.take(count).toList();
-    } catch (e) {
-      print('Error loading questions: $e');
-      return [];
-    }
+    // محاولة تحميل من Firebase أولاً، ثم المحلي كاحتياطي
+    return await loadQuestionsFromFirebase(count: count);
   }
 
   // Create a new game room
@@ -74,12 +74,14 @@ class FirebaseService {
     String hostName,
     int maxPlayers, {
     int questionsCount = 10,
+    int? timerDuration, // المدة الزمنية لكل سؤال بالثواني
   }) async {
     try {
       print('🚀 بدء إنشاء الغرفة...');
       print('اسم اللاعب: $hostName');
       print('عدد اللاعبين الأقصى: $maxPlayers');
       print('عدد الأسئلة: $questionsCount');
+      print('مدة السؤال: ${timerDuration ?? 'غير محدد'} ثانية');
 
       // التحقق من تهيئة Firebase
       if (Firebase.apps.isEmpty) {
@@ -121,6 +123,7 @@ class FirebaseService {
         currentQuestionIndex: 0,
         currentPlayerIndex: 0,
         createdAt: DateTime.now(),
+        timerDuration: timerDuration,
       );
 
       print('💾 جاري حفظ الغرفة في Firebase...');
@@ -148,6 +151,9 @@ class FirebaseService {
         final savedDoc = await _roomsCollection.doc(roomCode).get();
         if (savedDoc.exists) {
           print('✅ تم التحقق من حفظ الغرفة');
+
+          // حفظ بيانات الغرفة محلياً
+          await _saveLastRoomData(roomCode, hostName, true);
         } else {
           print('⚠️ الغرفة غير موجودة بعد الحفظ');
         }
@@ -298,11 +304,17 @@ class FirebaseService {
         try {
           final verifyDoc = await _roomsCollection.doc(roomCode).get();
           if (verifyDoc.exists) {
-            final verifyData = verifyDoc.data() as Map<String, dynamic>;
-            final savedPlayers = verifyData['players'] as List<dynamic>;
-            print(
-              '✅ تم التحقق من حفظ البيانات - عدد اللاعبين: ${savedPlayers.length}',
-            );
+            final verifyData = verifyDoc.data();
+            if (verifyData != null && verifyData is Map<String, dynamic>) {
+              final savedPlayers =
+                  verifyData['players'] as List<dynamic>? ?? [];
+              print(
+                '✅ تم التحقق من حفظ البيانات - عدد اللاعبين: ${savedPlayers.length}',
+              );
+
+              // حفظ بيانات الغرفة محلياً
+              await _saveLastRoomData(roomCode, playerName, false);
+            }
           }
         } catch (e) {
           print('⚠️ فشل في التحقق من حفظ البيانات: $e');
@@ -467,93 +479,109 @@ class FirebaseService {
     }
   }
 
-  // Leave room
-  Future<bool> leaveRoom(String roomCode) async {
+  // تحديث الدور الحالي في Firebase
+  Future<bool> updateCurrentPlayer(String roomCode, int playerIndex) async {
     try {
-      print('🚪 بدء عملية مغادرة الغرفة: $roomCode');
+      await _roomsCollection.doc(roomCode).update({
+        'currentPlayerIndex': playerIndex,
+      });
+      return true;
+    } catch (e) {
+      print('Error updating current player: $e');
+      return false;
+    }
+  }
+
+  // Leave room - تعيين حالة غير متصل بدلاً من الحذف
+  Future<bool> leaveRoom(String roomCode, {bool permanentLeave = false}) async {
+    try {
+      print('🚪 بدء عملية مغادرة الغرفة: $roomCode (نهائية: $permanentLeave)');
       final userId = currentUserId;
 
       final roomDoc = await _roomsCollection.doc(roomCode).get();
       if (!roomDoc.exists) {
         print('❌ الغرفة غير موجودة أو محذوفة مسبقاً');
-        return true; // نعتبر العملية ناجحة لأن الهدف تحقق (عدم وجود اللاعب في الغرفة)
+        await _clearLastRoomData(); // حذف البيانات المحفوظة
+        return true;
       }
 
       final room = GameRoom.fromFirestore(roomDoc);
       print('👥 عدد اللاعبين الحالي: ${room.players.length}');
 
       // التحقق من وجود اللاعب في الغرفة
-      final playerExists = room.players.any((player) => player.id == userId);
-      if (!playerExists) {
+      final playerIndex = room.players.indexWhere(
+        (player) => player.id == userId,
+      );
+      if (playerIndex == -1) {
         print('ℹ️ اللاعب غير موجود في الغرفة مسبقاً');
+        await _clearLastRoomData();
         return true;
       }
 
-      bool roomDeleted = false;
+      final currentPlayer = room.players[playerIndex];
 
-      // إذا كان هذا هو اللاعب الوحيد، احذف الغرفة مباشرة
-      if (room.players.length <= 1) {
-        print('🗑️ آخر لاعب يغادر - حذف الغرفة تلقائياً');
-        await _roomsCollection.doc(roomCode).delete();
-        print('✅ تم حذف الغرفة تلقائياً');
-        roomDeleted = true;
-      }
-      // إذا كان المضيف يغادر
-      else if (room.hostId == userId) {
-        print('👑 المضيف يغادر الغرفة');
+      if (permanentLeave) {
+        // مغادرة نهائية: حذف اللاعب تماماً
+        print('🚪 مغادرة نهائية - حذف اللاعب من الغرفة');
 
-        // العثور على لاعب آخر ليصبح المضيف الجديد
-        final remainingPlayers =
-            room.players.where((player) => player.id != userId).toList();
+        // حذف البيانات المحفوظة
+        await _clearLastRoomData();
 
-        if (remainingPlayers.isEmpty) {
-          // لا يوجد لاعبين آخرين، احذف الغرفة
-          print('🗑️ لا يوجد لاعبين آخرين - حذف الغرفة');
+        // إذا كان هذا هو اللاعب الوحيد، احذف الغرفة مباشرة
+        if (room.players.length <= 1) {
+          print('🗑️ آخر لاعب يغادر - حذف الغرفة تلقائياً');
           await _roomsCollection.doc(roomCode).delete();
-          print('✅ تم حذف الغرفة تلقائياً');
-          roomDeleted = true;
-        } else {
-          // نقل المضيف للاعب التالي
-          final newHost = remainingPlayers.first;
-          final updatedPlayers =
-              remainingPlayers.map((player) {
-                if (player.id == newHost.id) {
-                  return player.copyWith(isHost: true);
-                }
-                return player.copyWith(isHost: false);
-              }).toList();
+          return true;
+        }
 
-          print('👑 نقل المضيف إلى: ${newHost.name}');
+        // إذا كان المضيف يغادر نهائياً، نقل المضيف لآخر
+        if (currentPlayer.isHost) {
+          final remainingPlayers =
+              room.players.where((p) => p.id != userId).toList();
+          if (remainingPlayers.isNotEmpty) {
+            final newHost = remainingPlayers.first;
+            final updatedPlayers =
+                remainingPlayers.map((player) {
+                  if (player.id == newHost.id) {
+                    return player.copyWith(isHost: true);
+                  }
+                  return player.copyWith(isHost: false);
+                }).toList();
+
+            print('👑 نقل المضيف إلى: ${newHost.name}');
+            await _roomsCollection.doc(roomCode).update({
+              'hostId': newHost.id,
+              'players': updatedPlayers.map((p) => p.toMap()).toList(),
+            });
+          }
+        } else {
+          // لاعب عادي يغادر نهائياً
+          final updatedPlayers =
+              room.players.where((p) => p.id != userId).toList();
           await _roomsCollection.doc(roomCode).update({
-            'hostId': newHost.id,
             'players': updatedPlayers.map((p) => p.toMap()).toList(),
           });
-          print('✅ تم نقل المضيف وإزالة اللاعب');
         }
       } else {
-        // لاعب عادي يغادر
-        print('👤 لاعب عادي يغادر الغرفة');
+        // مغادرة مؤقتة: تعيين حالة غير متصل فقط
+        print('📱 مغادرة مؤقتة - تعيين حالة غير متصل');
+
         final updatedPlayers =
-            room.players.where((player) => player.id != userId).toList();
+            room.players.map((player) {
+              if (player.id == userId) {
+                return player.copyWith(
+                  isOnline: false,
+                  lastSeen: DateTime.now(),
+                );
+              }
+              return player;
+            }).toList();
 
-        if (updatedPlayers.isEmpty) {
-          // آخر لاعب يغادر، احذف الغرفة
-          print('🗑️ آخر لاعب يغادر - حذف الغرفة');
-          await _roomsCollection.doc(roomCode).delete();
-          print('✅ تم حذف الغرفة تلقائياً');
-          roomDeleted = true;
-        } else {
-          // تحديث قائمة اللاعبين فقط
-          await _roomsCollection.doc(roomCode).update({
-            'players': updatedPlayers.map((p) => p.toMap()).toList(),
-          });
-          print('✅ تم إزالة اللاعب من الغرفة');
-        }
-      }
+        await _roomsCollection.doc(roomCode).update({
+          'players': updatedPlayers.map((p) => p.toMap()).toList(),
+        });
 
-      // تحقق إضافي من أن الغرفة لم تصبح فارغة (فقط إذا لم يتم حذفها)
-      if (!roomDeleted) {
-        await _checkAndCleanEmptyRoom(roomCode);
+        print('✅ تم تعيين حالة غير متصل للاعب');
       }
 
       return true;
@@ -563,6 +591,11 @@ class FirebaseService {
       print('📄 تفاصيل الخطأ: ${e.toString()}');
       return false;
     }
+  }
+
+  // مغادرة نهائية للغرفة (حذف اللاعب تماماً)
+  Future<bool> permanentLeaveRoom(String roomCode) async {
+    return await leaveRoom(roomCode, permanentLeave: true);
   }
 
   // دالة مساعدة للتحقق من الغرف الفارغة وحذفها
@@ -576,9 +609,9 @@ class FirebaseService {
         return;
       }
 
-      final roomData = roomDoc.data() as Map<String, dynamic>?;
-      if (roomData == null) {
-        print('⚠️ بيانات الغرفة فارغة - حذف الغرفة');
+      final roomData = roomDoc.data();
+      if (roomData == null || roomData is! Map<String, dynamic>) {
+        print('⚠️ بيانات الغرفة فارغة أو تالفة - حذف الغرفة');
         await _roomsCollection.doc(roomCode).delete();
         return;
       }
@@ -608,7 +641,11 @@ class FirebaseService {
 
       for (final doc in querySnapshot.docs) {
         try {
-          final roomData = doc.data() as Map<String, dynamic>;
+          final roomData = doc.data();
+          if (roomData == null || roomData is! Map<String, dynamic>) {
+            print('⚠️ بيانات الغرفة ${doc.id} تالفة - تم تخطيها');
+            continue;
+          }
           final players = roomData['players'] as List<dynamic>? ?? [];
 
           // حذف الغرف الفارغة
@@ -700,7 +737,11 @@ class FirebaseService {
 
       for (final doc in querySnapshot.docs) {
         try {
-          final roomData = doc.data() as Map<String, dynamic>;
+          final roomData = doc.data();
+          if (roomData == null || roomData is! Map<String, dynamic>) {
+            print('⚠️ بيانات الغرفة ${doc.id} تالفة - تم تخطيها');
+            continue;
+          }
           final players = roomData['players'] as List<dynamic>? ?? [];
 
           // حذف الغرف الفارغة (بدون لاعبين)
@@ -739,7 +780,11 @@ class FirebaseService {
 
       for (final doc in querySnapshot.docs) {
         try {
-          final roomData = doc.data() as Map<String, dynamic>;
+          final roomData = doc.data();
+          if (roomData == null || roomData is! Map<String, dynamic>) {
+            print('⚠️ بيانات الغرفة ${doc.id} تالفة - تم تخطيها');
+            continue;
+          }
           final createdAt = (roomData['createdAt'] as Timestamp?)?.toDate();
 
           if (createdAt != null && createdAt.isBefore(cutoffTime)) {
@@ -787,10 +832,8 @@ class FirebaseService {
       final roomDoc = await _roomsCollection.doc(roomCode).get();
       if (!roomDoc.exists) return false;
 
-      final roomData = roomDoc.data() as Map<String, dynamic>;
-      final players = roomData['players'] as List<dynamic>? ?? [];
-
-      if (players.isEmpty) {
+      final roomData = roomDoc.data();
+      if (roomData == null || roomData is! Map<String, dynamic>) {
         await _roomsCollection.doc(roomCode).delete();
         print('🗑️ تم حذف الغرفة الفارغة: $roomCode');
         return true;
@@ -826,31 +869,40 @@ class FirebaseService {
           );
 
       result['rooms'] =
-          querySnapshot.docs.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            final players = data['players'] as List<dynamic>;
+          querySnapshot.docs
+              .map((doc) {
+                final data = doc.data();
+                if (data == null || data is! Map<String, dynamic>) {
+                  return null;
+                }
 
-            // البحث عن المضيف (المنشئ) من قائمة اللاعبين
-            String hostName = 'غير معروف';
-            final hostId = data['hostId'] as String;
+                final players = data['players'] as List<dynamic>? ?? [];
 
-            for (final playerData in players) {
-              final player = playerData as Map<String, dynamic>;
-              if (player['id'] == hostId) {
-                hostName = player['name'] as String? ?? 'غير معروف';
-                break;
-              }
-            }
+                // البحث عن المضيف (المنشئ) من قائمة اللاعبين
+                String hostName = 'غير معروف';
+                final hostId = data['hostId'] as String? ?? '';
 
-            return {
-              'id': doc.id,
-              'hostId': data['hostId'],
-              'hostName': hostName,
-              'playersCount': players.length,
-              'maxPlayers': data['maxPlayers'],
-              'createdAt': data['createdAt'],
-            };
-          }).toList();
+                for (final playerData in players) {
+                  if (playerData is Map<String, dynamic>) {
+                    final player = playerData;
+                    if (player['id'] == hostId) {
+                      hostName = player['name'] as String? ?? 'غير معروف';
+                      break;
+                    }
+                  }
+                }
+
+                return {
+                  'id': doc.id,
+                  'hostId': data['hostId'],
+                  'hostName': hostName,
+                  'playersCount': players.length,
+                  'maxPlayers': data['maxPlayers'],
+                  'createdAt': data['createdAt'],
+                };
+              })
+              .where((room) => room != null)
+              .toList();
 
       result['success'] = true;
       print('✅ تم العثور على ${result['rooms'].length} غرفة متاحة');
@@ -860,5 +912,1263 @@ class FirebaseService {
     }
 
     return result;
+  }
+
+  // طرد لاعب من الغرفة (للمضيف فقط)
+  Future<bool> kickPlayer(String roomCode, String playerIdToKick) async {
+    try {
+      print('🥾 بدء عملية طرد اللاعب: $playerIdToKick من الغرفة: $roomCode');
+      final userId = currentUserId;
+
+      final roomDoc = await _roomsCollection.doc(roomCode).get();
+      if (!roomDoc.exists) {
+        print('❌ الغرفة غير موجودة');
+        return false;
+      }
+
+      final room = GameRoom.fromFirestore(roomDoc);
+
+      // التحقق من أن المستخدم الحالي هو المضيف
+      if (room.hostId != userId) {
+        print('❌ فقط المضيف يمكنه طرد اللاعبين');
+        return false;
+      }
+
+      // التحقق من أن اللاعب المراد طرده موجود في الغرفة
+      final playerExists = room.players.any(
+        (player) => player.id == playerIdToKick,
+      );
+      if (!playerExists) {
+        print('❌ اللاعب المراد طرده غير موجود في الغرفة');
+        return false;
+      }
+
+      // التأكد من أن المضيف لا يحاول طرد نفسه
+      if (playerIdToKick == userId) {
+        print('❌ المضيف لا يمكنه طرد نفسه');
+        return false;
+      }
+
+      // إزالة اللاعب من قائمة اللاعبين
+      final updatedPlayers =
+          room.players.where((player) => player.id != playerIdToKick).toList();
+
+      print('👥 تحديث قائمة اللاعبين: ${updatedPlayers.length} لاعب متبقي');
+
+      await _roomsCollection.doc(roomCode).update({
+        'players': updatedPlayers.map((p) => p.toMap()).toList(),
+      });
+
+      print('✅ تم طرد اللاعب بنجاح');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في طرد اللاعب: $e');
+      return false;
+    }
+  }
+
+  // تحديث حالة اللاعب (متصل/غير متصل)
+  Future<bool> updatePlayerStatus(String roomCode, bool isOnline) async {
+    try {
+      print('🔄 تحديث حالة الاتصال: $isOnline للغرفة: $roomCode');
+
+      final userId = currentUserId;
+      final roomRef = _roomsCollection.doc(roomCode);
+
+      // استخدام الترانزاكشن لضمان التحديث الآمن
+      await _firestore.runTransaction((transaction) async {
+        final roomDoc = await transaction.get(roomRef);
+
+        if (!roomDoc.exists) {
+          print('❌ الغرفة غير موجودة');
+          return;
+        }
+
+        final data = roomDoc.data();
+        if (data == null || data is! Map<String, dynamic>) {
+          print('❌ بيانات الغرفة تالفة');
+          return;
+        }
+        final players = List<Map<String, dynamic>>.from(data['players'] ?? []);
+
+        // البحث عن اللاعب وتحديث حالته
+        for (int i = 0; i < players.length; i++) {
+          if (players[i]['id'] == userId) {
+            players[i]['isOnline'] = isOnline;
+            players[i]['lastSeen'] = FieldValue.serverTimestamp();
+            break;
+          }
+        }
+
+        // تحديث الغرفة
+        transaction.update(roomRef, {
+          'players': players,
+          'lastActivity': FieldValue.serverTimestamp(),
+        });
+      });
+
+      print('✅ تم تحديث حالة الاتصال بنجاح');
+      return true;
+    } catch (e) {
+      print('⚠️ خطأ في تحديث حالة الاتصال: $e');
+      return false;
+    }
+  }
+
+  // تحديث حالة اتصال اللاعبين بناءً على آخر نشاط (بدون إزالة من الغرفة)
+  Future<bool> removeInactivePlayers(String roomCode) async {
+    try {
+      print('🔄 تحديث حالات اتصال اللاعبين في الغرفة: $roomCode');
+
+      final roomDoc = await _roomsCollection.doc(roomCode).get();
+      if (!roomDoc.exists) return false;
+
+      final room = GameRoom.fromFirestore(roomDoc);
+      final now = DateTime.now();
+      bool hasChanges = false;
+
+      // تحديث حالة اللاعبين بناءً على آخر نشاط (بدون إزالة أحد)
+      final updatedPlayers =
+          room.players.map((player) {
+            // إذا كان اللاعب الحالي، اتركه كمتصل دائماً
+            if (player.id == currentUserId) {
+              if (!player.isOnline) {
+                hasChanges = true;
+                return player.copyWith(isOnline: true, lastSeen: now);
+              }
+              return player.copyWith(lastSeen: now);
+            }
+
+            // للاعبين الآخرين، تحقق من آخر نشاط
+            if (player.lastSeen != null) {
+              final timeSinceLastSeen = now.difference(player.lastSeen!);
+              final shouldBeOffline = timeSinceLastSeen.inSeconds > 8;
+
+              if (player.isOnline && shouldBeOffline) {
+                print(
+                  '📴 اللاعب ${player.name} أصبح غير متصل (آخر نشاط: ${timeSinceLastSeen.inSeconds} ثانية)',
+                );
+                hasChanges = true;
+                return player.copyWith(isOnline: false);
+              } else if (!player.isOnline && !shouldBeOffline) {
+                print('📱 اللاعب ${player.name} أصبح متصل');
+                hasChanges = true;
+                return player.copyWith(isOnline: true);
+              }
+            } else if (player.isOnline) {
+              // إذا لم يكن لديه وقت آخر مشاهدة وهو متصل، اجعله غير متصل
+              print('📴 اللاعب ${player.name} بدون آخر نشاط - غير متصل');
+              hasChanges = true;
+              return player.copyWith(isOnline: false);
+            }
+
+            return player;
+          }).toList();
+
+      // إذا كان هناك تغييرات في حالة الاتصال، حدث الغرفة
+      if (hasChanges) {
+        await _roomsCollection.doc(roomCode).update({
+          'players': updatedPlayers.map((p) => p.toMap()).toList(),
+          'lastActivity': FieldValue.serverTimestamp(),
+        });
+
+        final onlineCount = updatedPlayers.where((p) => p.isOnline).length;
+        final offlineCount = updatedPlayers.length - onlineCount;
+        print(
+          '✅ تم تحديث حالات الاتصال - متصل: $onlineCount، غير متصل: $offlineCount',
+        );
+      }
+
+      return true;
+    } catch (e) {
+      print('❌ خطأ في تحديث حالات اتصال اللاعبين: $e');
+      return false;
+    }
+  }
+
+  // إزالة اللاعبين الذين غادروا نهائياً من الغرفة (معطلة حالياً)
+  // تم تعطيل هذه الوظيفة بناءً على طلب المستخدم - لا إزالة تلقائية للاعبين
+  Future<bool> removeDisconnectedPlayers(
+    String roomCode, {
+    int disconnectedTimeoutMinutes = 30,
+  }) async {
+    try {
+      print('🧹 تم تعطيل إزالة اللاعبين المنقطعين - الوظيفة غير فعالة');
+
+      // تم تعليق الكود التالي بناءً على طلب المستخدم
+      // لعدم الرغبة في الإزالة التلقائية للاعبين
+      /*
+      print('🧹 إزالة اللاعبين المنقطعين لفترة طويلة من الغرفة: $roomCode');
+
+      final roomDoc = await _roomsCollection.doc(roomCode).get();
+      if (!roomDoc.exists) return false;
+
+      final room = GameRoom.fromFirestore(roomDoc);
+      final now = DateTime.now();
+      final cutoffTime = now.subtract(
+        Duration(minutes: disconnectedTimeoutMinutes),
+      );
+
+      // البحث عن اللاعبين الذين انقطعوا لفترة طويلة جداً (30 دقيقة افتراضياً)
+      final activePlayers =
+          room.players.where((player) {
+            // احتفظ باللاعب الحالي دائماً
+            if (player.id == currentUserId) return true;
+
+            // احتفظ باللاعبين المتصلين
+            if (player.isOnline) return true;
+
+            // احتفظ باللاعبين الذين انقطعوا لفترة قصيرة
+            if (player.lastSeen != null &&
+                player.lastSeen!.isAfter(cutoffTime)) {
+              return true;
+            }
+
+            // إزالة اللاعبين الذين انقطعوا لفترة طويلة جداً
+            print(
+              '🗑️ إزالة اللاعب ${player.name} - منقطع لأكثر من $disconnectedTimeoutMinutes دقيقة',
+            );
+            return false;
+          }).toList();
+
+      // إذا لم يتغير عدد اللاعبين، لا حاجة للتحديث
+      if (activePlayers.length == room.players.length) {
+        return true;
+      }
+
+      // إذا لم يبق أي لاعبين، احذف الغرفة
+      if (activePlayers.isEmpty) {
+        print('🗑️ لا يوجد لاعبين نشطين - حذف الغرفة');
+        await _roomsCollection.doc(roomCode).delete();
+        return true;
+      }
+
+      // إذا بقي لاعب واحد فقط في اللعبة، انته اللعبة
+      if (activePlayers.length == 1 && room.state == GameState.inProgress) {
+        print('🏆 لاعب واحد متبقي في اللعبة - إنهاء اللعبة');
+        await _roomsCollection.doc(roomCode).update({
+          'players': activePlayers.map((p) => p.toMap()).toList(),
+          'state': GameState.finished.index,
+          'winner': activePlayers.first.id,
+          'endReason': 'single_player_remaining',
+        });
+        return true;
+      }
+
+      // تحديث قائمة اللاعبين النشطين
+      await _roomsCollection.doc(roomCode).update({
+        'players': activePlayers.map((p) => p.toMap()).toList(),
+      });
+
+      print(
+        '✅ تم إزالة ${room.players.length - activePlayers.length} لاعب منقطع لفترة طويلة',
+      );
+      */
+
+      return true;
+    } catch (e) {
+      print('❌ خطأ في إزالة اللاعبين المنقطعين: $e');
+      return false;
+    }
+  }
+
+  // مراقبة دورية لحالة اتصال اللاعبين (تحديث حالة الاتصال فقط بدون إزالة)
+  Timer? _inactivityTimer;
+
+  Future<void> startInactivityMonitoring(String roomCode) async {
+    // إيقاف أي مراقبة سابقة
+    _inactivityTimer?.cancel();
+
+    // مراقبة أسرع كل 5 ثوانٍ لاكتشاف انقطاع الاتصال بسرعة
+    _inactivityTimer = Timer.periodic(const Duration(seconds: 5), (
+      timer,
+    ) async {
+      try {
+        // التحقق من وجود الغرفة
+        final roomDoc = await _roomsCollection.doc(roomCode).get();
+        if (!roomDoc.exists) {
+          timer.cancel();
+          return;
+        }
+
+        final room = GameRoom.fromFirestore(roomDoc);
+
+        // إذا انتهت اللعبة، أوقف المراقبة
+        if (room.state == GameState.finished) {
+          timer.cancel();
+          return;
+        }
+
+        // تحديث حالة اللاعب الحالي كمتصل
+        await updatePlayerStatus(roomCode, true);
+
+        // تحديث حالات اتصال جميع اللاعبين (بدون إزالة أحد)
+        await removeInactivePlayers(roomCode);
+      } catch (e) {
+        print('⚠️ خطأ في المراقبة الدورية: $e');
+      }
+    });
+  }
+
+  // إيقاف مراقبة عدم النشاط
+  void stopInactivityMonitoring() {
+    _inactivityTimer?.cancel();
+    _inactivityTimer = null;
+  }
+
+  // مراقبة دورية للتنظيف (تم تعطيل إزالة اللاعبين المنقطعين)
+  Timer? _cleanupTimer;
+
+  Future<void> startPeriodicCleanup(String roomCode) async {
+    // إيقاف أي تنظيف سابق
+    _cleanupTimer?.cancel();
+
+    // تنظيف دوري كل 10 دقائق (تم تعطيل إزالة اللاعبين)
+    _cleanupTimer = Timer.periodic(const Duration(minutes: 10), (timer) async {
+      try {
+        // التحقق من وجود الغرفة
+        final roomDoc = await _roomsCollection.doc(roomCode).get();
+        if (!roomDoc.exists) {
+          timer.cancel();
+          return;
+        }
+
+        final room = GameRoom.fromFirestore(roomDoc);
+
+        // إذا انتهت اللعبة، أوقف التنظيف
+        if (room.state == GameState.finished) {
+          timer.cancel();
+          return;
+        }
+
+        // تم تعطيل إزالة اللاعبين المنقطعين لفترة طويلة حسب طلب المستخدم
+        // await removeDisconnectedPlayers(roomCode);
+        print('🔄 التنظيف الدوري نشط (إزالة اللاعبين معطلة)');
+      } catch (e) {
+        print('⚠️ خطأ في التنظيف الدوري: $e');
+      }
+    });
+  }
+
+  // إيقاف التنظيف الدوري
+  void stopPeriodicCleanup() {
+    _cleanupTimer?.cancel();
+    _cleanupTimer = null;
+  }
+
+  // حفظ بيانات الغرفة الأخيرة محلياً
+  Future<void> _saveLastRoomData(
+    String roomCode,
+    String playerName,
+    bool isHost,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_lastRoomCodeKey, roomCode);
+      await prefs.setString(_lastPlayerNameKey, playerName);
+      await prefs.setBool(_lastIsHostKey, isHost);
+      print('💾 تم حفظ بيانات الغرفة الأخيرة: $roomCode');
+    } catch (e) {
+      print('⚠️ خطأ في حفظ بيانات الغرفة: $e');
+    }
+  }
+
+  // استرداد بيانات الغرفة الأخيرة
+  Future<Map<String, dynamic>?> getLastRoomData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final roomCode = prefs.getString(_lastRoomCodeKey);
+      final playerName = prefs.getString(_lastPlayerNameKey);
+      final isHost = prefs.getBool(_lastIsHostKey) ?? false;
+
+      if (roomCode != null && playerName != null) {
+        // التحقق من وجود الغرفة وأن اللاعب لا يزال بها
+        final roomDoc = await _roomsCollection.doc(roomCode).get();
+        if (roomDoc.exists) {
+          final room = GameRoom.fromFirestore(roomDoc);
+          final playerExists = room.players.any((p) => p.id == currentUserId);
+
+          if (playerExists && room.state != GameState.finished) {
+            return {
+              'roomCode': roomCode,
+              'playerName': playerName,
+              'isHost': isHost,
+              'room': room,
+            };
+          }
+        }
+      }
+    } catch (e) {
+      print('⚠️ خطأ في استرداد بيانات الغرفة الأخيرة: $e');
+    }
+
+    // حذف البيانات المحفوظة إذا لم تعد صالحة
+    await _clearLastRoomData();
+    return null;
+  }
+
+  // حذف بيانات الغرفة المحفوظة
+  Future<void> _clearLastRoomData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_lastRoomCodeKey);
+      await prefs.remove(_lastPlayerNameKey);
+      await prefs.remove(_lastIsHostKey);
+      print('🗑️ تم حذف بيانات الغرفة المحفوظة');
+    } catch (e) {
+      print('⚠️ خطأ في حذف بيانات الغرفة: $e');
+    }
+  }
+
+  // دالة عامة لحذف بيانات الغرفة المحفوظة
+  Future<void> clearLastRoomData() async {
+    await _clearLastRoomData();
+  }
+
+  // العودة للغرفة باستخدام البيانات المحفوظة
+  Future<GameRoom?> rejoinRoom(String roomCode, String playerName) async {
+    try {
+      print('🔄 محاولة العودة للغرفة: $roomCode');
+
+      final roomDoc = await _roomsCollection.doc(roomCode).get();
+      if (!roomDoc.exists) {
+        print('❌ الغرفة غير موجودة');
+        return null;
+      }
+
+      final room = GameRoom.fromFirestore(roomDoc);
+      final userId = currentUserId;
+
+      // البحث عن اللاعب في الغرفة
+      final existingPlayerIndex = room.players.indexWhere(
+        (p) => p.id == userId,
+      );
+
+      if (existingPlayerIndex != -1) {
+        // تحديث حالة الاتصال للاعب الموجود
+        await updatePlayerStatus(roomCode, true);
+        print('✅ تم العودة للغرفة كلاعب موجود');
+        return room;
+      } else {
+        // محاولة الانضمام كلاعب جديد (إذا كانت الغرفة غير ممتلئة)
+        print('🔄 محاولة الانضمام كلاعب جديد...');
+        return await joinRoom(roomCode, playerName);
+      }
+    } catch (e) {
+      print('⚠️ خطأ في العودة للغرفة: $e');
+      return null;
+    }
+  }
+
+  // ===== إدارة الأسئلة من Firebase =====
+
+  /// تحميل الأسئلة من Firebase مع الحفاظ على نفس هيكل JSON
+  Future<List<Question>> loadQuestionsFromFirebase({int count = 10}) async {
+    try {
+      print('📚 جاري تحميل الأسئلة من Firebase...');
+
+      final snapshot = await _firestore.collection('questions').get();
+
+      if (snapshot.docs.isEmpty) {
+        print('⚠️ لا توجد أسئلة في Firebase، سيتم تحميل الأسئلة المحلية');
+        return await _loadLocalQuestions(count: count);
+      }
+
+      final questions =
+          snapshot.docs.map((doc) {
+            final data = doc.data();
+            return Question(
+              questionText: data['question'] ?? '',
+              options: List<String>.from(data['options'] ?? []),
+              correctAnswerIndex: data['correct_answer'] ?? 0,
+              category: data['category'] ?? 'معلومات عامة',
+            );
+          }).toList();
+
+      // خلط الأسئلة واختيار العدد المطلوب
+      final random = Random();
+      questions.shuffle(random);
+      final selectedQuestions = questions.take(count).toList();
+
+      print('✅ تم تحميل ${selectedQuestions.length} سؤال من Firebase');
+      return selectedQuestions;
+    } catch (e) {
+      print('❌ خطأ في تحميل الأسئلة من Firebase: $e');
+      print('🔄 العودة للأسئلة المحلية...');
+      return await _loadLocalQuestions(count: count);
+    }
+  }
+
+  /// تحميل الأسئلة المحلية كاحتياطي
+  Future<List<Question>> _loadLocalQuestions({int count = 10}) async {
+    try {
+      final String response = await rootBundle.loadString(
+        'assets/data/questions.json',
+      );
+      final List<dynamic> jsonData = json.decode(response);
+
+      final questions =
+          jsonData.map((json) => Question.fromJson(json)).toList();
+
+      // خلط الأسئلة واختيار العدد المطلوب
+      final random = Random();
+      questions.shuffle(random);
+      return questions.take(count).toList();
+    } catch (e) {
+      print('❌ خطأ في تحميل الأسئلة المحلية: $e');
+      return [];
+    }
+  }
+
+  /// تحميل أسئلة حسب الفئة
+  Future<List<Question>> loadQuestionsByCategory(
+    String category, {
+    int count = 10,
+  }) async {
+    try {
+      print('📚 جاري تحميل أسئلة فئة: $category');
+
+      final snapshot =
+          await _firestore
+              .collection('questions')
+              .where('category', isEqualTo: category)
+              .get();
+
+      if (snapshot.docs.isEmpty) {
+        print('⚠️ لا توجد أسئلة في فئة $category، جاري تحميل جميع الأسئلة');
+        return await loadQuestionsFromFirebase(count: count);
+      }
+
+      final questions =
+          snapshot.docs.map((doc) {
+            final data = doc.data();
+            return Question(
+              questionText: data['question'] ?? '',
+              options: List<String>.from(data['options'] ?? []),
+              correctAnswerIndex: data['correct_answer'] ?? 0,
+              category: data['category'] ?? 'معلومات عامة',
+            );
+          }).toList();
+
+      // خلط الأسئلة واختيار العدد المطلوب
+      final random = Random();
+      questions.shuffle(random);
+      final selectedQuestions = questions.take(count).toList();
+
+      print('✅ تم تحميل ${selectedQuestions.length} سؤال من فئة $category');
+      return selectedQuestions;
+    } catch (e) {
+      print('❌ خطأ في تحميل أسئلة الفئة $category: $e');
+      return await loadQuestionsFromFirebase(count: count);
+    }
+  }
+
+  /// تحميل الفئات المتاحة
+  Future<List<String>> loadCategories() async {
+    try {
+      print('📚 جاري تحميل الفئات المتاحة...');
+
+      final snapshot = await _firestore.collection('questions').get();
+
+      final categories = <String>{};
+
+      for (final doc in snapshot.docs) {
+        final category = doc.data()['category'] as String?;
+        if (category != null && category.isNotEmpty) {
+          categories.add(category);
+        }
+      }
+
+      final categoriesList = categories.toList()..sort();
+      print('✅ تم تحميل ${categoriesList.length} فئة: $categoriesList');
+      return categoriesList;
+    } catch (e) {
+      print('❌ خطأ في تحميل الفئات: $e');
+      return [
+        'معلومات عامة',
+        'رياضة',
+        'ديني',
+        'ترفيه',
+        'تكنولوجيا',
+        'ألغاز منطقية',
+        'علوم',
+        'ثقافة',
+      ];
+    }
+  }
+
+  /// رفع الأسئلة المحلية إلى Firebase (للمشرفين)
+  Future<bool> uploadLocalQuestionsToFirebase() async {
+    try {
+      print('📤 جاري رفع الأسئلة المحلية إلى Firebase...');
+
+      // تحميل الأسئلة المحلية
+      final String response = await rootBundle.loadString(
+        'assets/data/questions.json',
+      );
+      final List<dynamic> jsonData = json.decode(response);
+
+      // تحميل الأسئلة الموجودة في Firebase للمقارنة
+      print('🔍 جاري فحص الأسئلة الموجودة في Firebase...');
+      final existingSnapshot = await _firestore.collection('questions').get();
+
+      // إنشاء مجموعة من الأسئلة الموجودة للمقارنة السريعة
+      final existingQuestions = <String>{};
+      for (final doc in existingSnapshot.docs) {
+        final data = doc.data();
+        final questionText = data['question'] as String? ?? '';
+        if (questionText.isNotEmpty) {
+          // استخدام نص السؤال كمعرف فريد (بعد تنظيفه)
+          existingQuestions.add(_normalizeQuestionText(questionText));
+        }
+      }
+
+      print(
+        '📊 تم العثور على ${existingQuestions.length} سؤال موجود في Firebase',
+      );
+
+      int successCount = 0;
+      int duplicateCount = 0;
+      int errorCount = 0;
+
+      for (final questionData in jsonData) {
+        try {
+          final questionText = questionData['question'] as String? ?? '';
+          final normalizedText = _normalizeQuestionText(questionText);
+
+          // فحص ما إذا كان السؤال موجود مسبقاً
+          if (existingQuestions.contains(normalizedText)) {
+            print('⏭️ تم تخطي سؤال مكرر: ${questionText.substring(0, 50)}...');
+            duplicateCount++;
+            continue;
+          }
+
+          // رفع السؤال إذا لم يكن موجوداً
+          await _firestore.collection('questions').add({
+            'question': questionText,
+            'options': questionData['options'],
+            'correct_answer': questionData['correct_answer'],
+            'category': questionData['category'],
+            'created_at': FieldValue.serverTimestamp(),
+            'usage_count': 0,
+            'source': 'local_upload',
+            'question_hash': _generateQuestionHash(
+              questionText,
+            ), // إضافة hash للسؤال
+          });
+
+          // إضافة السؤال للمجموعة لتجنب التكرار في نفس العملية
+          existingQuestions.add(normalizedText);
+          successCount++;
+
+          print('✅ تم رفع سؤال جديد: ${questionText.substring(0, 50)}...');
+        } catch (e) {
+          print('❌ خطأ في رفع سؤال: $e');
+          errorCount++;
+        }
+      }
+
+      print('📊 نتائج الرفع:');
+      print('   ✅ أسئلة جديدة: $successCount');
+      print('   ⏭️ أسئلة مكررة: $duplicateCount');
+      print('   ❌ أخطاء: $errorCount');
+      print('   📝 إجمالي الأسئلة المعالجة: ${jsonData.length}');
+
+      return successCount > 0;
+    } catch (e) {
+      print('❌ خطأ في رفع الأسئلة: $e');
+      return false;
+    }
+  }
+
+  /// تطبيع نص السؤال للمقارنة (إزالة المسافات الزائدة وتوحيد الحالة)
+  String _normalizeQuestionText(String text) {
+    return text
+        .trim()
+        .replaceAll(RegExp(r'\s+'), ' ') // استبدال عدة مسافات بمسافة واحدة
+        .toLowerCase(); // تحويل للأحرف الصغيرة للمقارنة
+  }
+
+  /// إنشاء hash للسؤال لضمان الفرادة
+  String _generateQuestionHash(String questionText) {
+    // استخدام hash بسيط للسؤال
+    return questionText.hashCode.toString();
+  }
+
+  /// إضافة سؤال جديد (للمشرفين فقط)
+  Future<QuestionAddResult> addQuestion(Question question) async {
+    try {
+      print('➕ جاري إضافة سؤال جديد...');
+
+      // فحص عدم وجود السؤال مسبقاً
+      final normalizedText = _normalizeQuestionText(question.questionText);
+
+      print('🔍 جاري فحص عدم تكرار السؤال...');
+      final existingQuery =
+          await _firestore
+              .collection('questions')
+              .where(
+                'question_hash',
+                isEqualTo: _generateQuestionHash(question.questionText),
+              )
+              .get();
+
+      if (existingQuery.docs.isNotEmpty) {
+        print('⚠️ السؤال موجود مسبقاً في قاعدة البيانات');
+        return QuestionAddResult.duplicate; // السؤال موجود مسبقاً
+      }
+
+      // فحص إضافي بالبحث في نص السؤال
+      final allQuestionsSnapshot =
+          await _firestore.collection('questions').get();
+      for (final doc in allQuestionsSnapshot.docs) {
+        final data = doc.data();
+        final existingQuestionText = data['question'] as String? ?? '';
+        if (_normalizeQuestionText(existingQuestionText) == normalizedText) {
+          print(
+            '⚠️ تم العثور على سؤال مشابه: ${existingQuestionText.substring(0, 50)}...',
+          );
+          return QuestionAddResult.duplicate; // السؤال مشابه لسؤال موجود
+        }
+      }
+
+      // إضافة السؤال إذا لم يكن موجوداً
+      await _firestore.collection('questions').add({
+        'question': question.questionText,
+        'options': question.options,
+        'correct_answer': question.correctAnswerIndex,
+        'category': question.category,
+        'created_at': FieldValue.serverTimestamp(),
+        'usage_count': 0,
+        'source': 'manual_add',
+        'question_hash': _generateQuestionHash(question.questionText),
+      });
+
+      print('✅ تم إضافة السؤال بنجاح');
+      return QuestionAddResult.success;
+    } catch (e) {
+      print('❌ خطأ في إضافة السؤال: $e');
+      return QuestionAddResult.error;
+    }
+  }
+
+  /// تحديث عداد استخدام السؤال
+  Future<void> incrementQuestionUsage(String questionId) async {
+    try {
+      await _firestore.collection('questions').doc(questionId).update({
+        'usage_count': FieldValue.increment(1),
+        'last_used': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      print('❌ خطأ في تحديث عداد الاستخدام: $e');
+    }
+  }
+
+  /// الحصول على إحصائيات الأسئلة
+  Future<Map<String, dynamic>> getQuestionsStats() async {
+    try {
+      final snapshot = await _firestore.collection('questions').get();
+
+      int totalQuestions = snapshot.docs.length;
+      int totalUsage = 0;
+      final categoryStats = <String, int>{};
+
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final usage = data['usage_count'] as int? ?? 0;
+        final category = data['category'] as String? ?? 'غير محدد';
+
+        totalUsage += usage;
+        categoryStats[category] = (categoryStats[category] ?? 0) + 1;
+      }
+
+      return {
+        'total_questions': totalQuestions,
+        'total_usage': totalUsage,
+        'categories': categoryStats,
+      };
+    } catch (e) {
+      print('❌ خطأ في الحصول على إحصائيات الأسئلة: $e');
+      return {'total_questions': 0, 'total_usage': 0, 'categories': {}};
+    }
+  }
+
+  // ===== إدارة الفئات المخصصة =====
+
+  /// إضافة فئة جديدة
+  Future<bool> addCustomCategory(
+    String categoryName, {
+    String? description,
+    String? icon,
+    Color? color,
+  }) async {
+    try {
+      print('➕ جاري إضافة فئة جديدة: $categoryName');
+
+      // التحقق من عدم وجود الفئة مسبقاً
+      final existingCategory =
+          await _firestore
+              .collection('categories')
+              .where('name', isEqualTo: categoryName.trim())
+              .get();
+
+      if (existingCategory.docs.isNotEmpty) {
+        print('⚠️ الفئة موجودة مسبقاً');
+        return false;
+      }
+
+      // إضافة الفئة الجديدة
+      await _firestore.collection('categories').add({
+        'name': categoryName.trim(),
+        'description': description ?? '',
+        'icon': icon ?? 'category',
+        'color': color?.value ?? 0xFF9C27B0, // اللون الافتراضي بنفسجي
+        'created_at': FieldValue.serverTimestamp(),
+        'questions_count': 0,
+        'usage_count': 0,
+        'is_custom': true,
+      });
+
+      print('✅ تم إضافة الفئة بنجاح');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في إضافة الفئة: $e');
+      return false;
+    }
+  }
+
+  /// حذف فئة مخصصة
+  Future<bool> deleteCustomCategory(String categoryId) async {
+    try {
+      print('🗑️ جاري حذف الفئة: $categoryId');
+
+      // التحقق من وجود الفئة
+      final categoryDoc =
+          await _firestore.collection('categories').doc(categoryId).get();
+      if (!categoryDoc.exists) {
+        print('❌ الفئة غير موجودة');
+        return false;
+      }
+
+      final categoryData = categoryDoc.data()!;
+      final categoryName = categoryData['name'] as String;
+      final isCustom = categoryData['is_custom'] as bool? ?? false;
+
+      // منع حذف الفئات الأساسية
+      if (!isCustom) {
+        print('❌ لا يمكن حذف الفئات الأساسية');
+        return false;
+      }
+
+      // التحقق من وجود أسئلة في هذه الفئة
+      final questionsInCategory =
+          await _firestore
+              .collection('questions')
+              .where('category', isEqualTo: categoryName)
+              .get();
+
+      if (questionsInCategory.docs.isNotEmpty) {
+        print('⚠️ توجد ${questionsInCategory.docs.length} أسئلة في هذه الفئة');
+
+        // نقل الأسئلة إلى فئة "معلومات عامة"
+        final batch = _firestore.batch();
+        for (final doc in questionsInCategory.docs) {
+          batch.update(doc.reference, {'category': 'معلومات عامة'});
+        }
+        await batch.commit();
+        print('🔄 تم نقل الأسئلة إلى فئة "معلومات عامة"');
+      }
+
+      // حذف الفئة
+      await _firestore.collection('categories').doc(categoryId).delete();
+      print('✅ تم حذف الفئة بنجاح');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في حذف الفئة: $e');
+      return false;
+    }
+  }
+
+  /// تحديث فئة مخصصة
+  Future<bool> updateCustomCategory(
+    String categoryId, {
+    String? name,
+    String? description,
+    String? icon,
+    Color? color,
+  }) async {
+    try {
+      print('🔄 جاري تحديث الفئة: $categoryId');
+
+      final updateData = <String, dynamic>{};
+
+      if (name != null) updateData['name'] = name.trim();
+      if (description != null) updateData['description'] = description;
+      if (icon != null) updateData['icon'] = icon;
+      if (color != null) updateData['color'] = color.value;
+
+      updateData['updated_at'] = FieldValue.serverTimestamp();
+
+      await _firestore
+          .collection('categories')
+          .doc(categoryId)
+          .update(updateData);
+      print('✅ تم تحديث الفئة بنجاح');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في تحديث الفئة: $e');
+      return false;
+    }
+  }
+
+  /// الحصول على جميع الفئات (الأساسية والمخصصة)
+  Future<List<Map<String, dynamic>>> getAllCategories() async {
+    try {
+      print('📚 جاري تحميل جميع الفئات...');
+
+      // الفئات الأساسية (افتراضية)
+      final defaultCategories = [
+        {
+          'id': 'default_general',
+          'name': 'معلومات عامة',
+          'description': 'أسئلة ثقافية ومعلومات عامة',
+          'icon': 'info',
+          'color': 0xFF2196F3,
+          'is_custom': false,
+          'questions_count': 0,
+          'usage_count': 0,
+        },
+        {
+          'id': 'default_sports',
+          'name': 'رياضة',
+          'description': 'أسئلة رياضية ومعلومات عن الرياضة',
+          'icon': 'sports_soccer',
+          'color': 0xFF4CAF50,
+          'is_custom': false,
+          'questions_count': 0,
+          'usage_count': 0,
+        },
+        {
+          'id': 'default_religion',
+          'name': 'ديني',
+          'description': 'أسئلة دينية وإسلامية',
+          'icon': 'mosque',
+          'color': 0xFF8BC34A,
+          'is_custom': false,
+          'questions_count': 0,
+          'usage_count': 0,
+        },
+        {
+          'id': 'default_entertainment',
+          'name': 'ترفيه',
+          'description': 'أسئلة ترفيهية وأفلام وألعاب',
+          'icon': 'movie',
+          'color': 0xFFFF9800,
+          'is_custom': false,
+          'questions_count': 0,
+          'usage_count': 0,
+        },
+        {
+          'id': 'default_technology',
+          'name': 'تكنولوجيا',
+          'description': 'أسئلة تقنية وحاسوب',
+          'icon': 'computer',
+          'color': 0xFF9C27B0,
+          'is_custom': false,
+          'questions_count': 0,
+          'usage_count': 0,
+        },
+        {
+          'id': 'default_logic',
+          'name': 'ألغاز منطقية',
+          'description': 'ألغاز وأسئلة منطقية',
+          'icon': 'psychology',
+          'color': 0xFFE91E63,
+          'is_custom': false,
+          'questions_count': 0,
+          'usage_count': 0,
+        },
+        {
+          'id': 'default_science',
+          'name': 'علوم',
+          'description': 'أسئلة علمية وطبيعية',
+          'icon': 'science',
+          'color': 0xFF00BCD4,
+          'is_custom': false,
+          'questions_count': 0,
+          'usage_count': 0,
+        },
+        {
+          'id': 'default_culture',
+          'name': 'ثقافة',
+          'description': 'أسئلة ثقافية وتاريخية',
+          'icon': 'library_books',
+          'color': 0xFF795548,
+          'is_custom': false,
+          'questions_count': 0,
+          'usage_count': 0,
+        },
+      ];
+
+      // الفئات المخصصة من Firebase
+      final customCategoriesSnapshot =
+          await _firestore.collection('categories').get();
+      final customCategories =
+          customCategoriesSnapshot.docs.map((doc) {
+            final data = doc.data();
+            return {
+              'id': doc.id,
+              'name': data['name'] ?? '',
+              'description': data['description'] ?? '',
+              'icon': data['icon'] ?? 'category',
+              'color': data['color'] ?? 0xFF9C27B0,
+              'is_custom': data['is_custom'] ?? true,
+              'questions_count': data['questions_count'] ?? 0,
+              'usage_count': data['usage_count'] ?? 0,
+            };
+          }).toList();
+
+      // دمج الفئات الأساسية والمخصصة
+      final allCategories = [...defaultCategories, ...customCategories];
+
+      // حساب عدد الأسئلة لكل فئة
+      final questionsSnapshot = await _firestore.collection('questions').get();
+      final categoryQuestionCounts = <String, int>{};
+
+      for (final doc in questionsSnapshot.docs) {
+        final category = doc.data()['category'] as String? ?? 'معلومات عامة';
+        categoryQuestionCounts[category] =
+            (categoryQuestionCounts[category] ?? 0) + 1;
+      }
+
+      // تحديث عدد الأسئلة لكل فئة
+      for (final category in allCategories) {
+        final categoryName = category['name'] as String;
+        category['questions_count'] = categoryQuestionCounts[categoryName] ?? 0;
+      }
+
+      // ترتيب الفئات (الأساسية أولاً، ثم المخصصة حسب الاسم)
+      allCategories.sort((a, b) {
+        final aIsCustom = a['is_custom'] as bool;
+        final bIsCustom = b['is_custom'] as bool;
+
+        if (aIsCustom == bIsCustom) {
+          return (a['name'] as String).compareTo(b['name'] as String);
+        }
+        return aIsCustom ? 1 : -1; // الأساسية أولاً
+      });
+
+      print(
+        '✅ تم تحميل ${allCategories.length} فئة (${defaultCategories.length} أساسية + ${customCategories.length} مخصصة)',
+      );
+      return allCategories;
+    } catch (e) {
+      print('❌ خطأ في تحميل الفئات: $e');
+      return [];
+    }
+  }
+
+  /// الحصول على الأسئلة حسب الفئة مع تفاصيل إضافية
+  Future<List<Map<String, dynamic>>> getQuestionsByCategory(
+    String categoryName,
+  ) async {
+    try {
+      print('📚 جاري تحميل أسئلة فئة: $categoryName');
+
+      final snapshot =
+          await _firestore
+              .collection('questions')
+              .where('category', isEqualTo: categoryName)
+              .get();
+
+      final questions =
+          snapshot.docs.map((doc) {
+            final data = doc.data();
+            return {
+              'id': doc.id,
+              'question': data['question'] ?? '',
+              'options': List<String>.from(data['options'] ?? []),
+              'correct_answer': data['correct_answer'] ?? 0,
+              'category': data['category'] ?? 'معلومات عامة',
+              'created_at': data['created_at'],
+              'usage_count': data['usage_count'] ?? 0,
+              'source': data['source'] ?? 'unknown',
+            };
+          }).toList();
+
+      // ترتيب الأسئلة حسب تاريخ الإنشاء (الأحدث أولاً)
+      questions.sort((a, b) {
+        final aTime = a['created_at'] as Timestamp?;
+        final bTime = b['created_at'] as Timestamp?;
+
+        if (aTime == null && bTime == null) return 0;
+        if (aTime == null) return 1;
+        if (bTime == null) return -1;
+
+        return bTime.compareTo(aTime);
+      });
+
+      print('✅ تم تحميل ${questions.length} سؤال من فئة $categoryName');
+      return questions;
+    } catch (e) {
+      print('❌ خطأ في تحميل أسئلة الفئة: $e');
+      return [];
+    }
+  }
+
+  /// حذف سؤال معين
+  Future<bool> deleteQuestion(String questionId) async {
+    try {
+      print('🗑️ جاري حذف السؤال: $questionId');
+
+      await _firestore.collection('questions').doc(questionId).delete();
+      print('✅ تم حذف السؤال بنجاح');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في حذف السؤال: $e');
+      return false;
+    }
+  }
+
+  /// تحديث سؤال معين
+  Future<bool> updateQuestion(
+    String questionId,
+    Question updatedQuestion,
+  ) async {
+    try {
+      print('🔄 جاري تحديث السؤال: $questionId');
+
+      await _firestore.collection('questions').doc(questionId).update({
+        'question': updatedQuestion.questionText,
+        'options': updatedQuestion.options,
+        'correct_answer': updatedQuestion.correctAnswerIndex,
+        'category': updatedQuestion.category,
+        'updated_at': FieldValue.serverTimestamp(),
+      });
+
+      print('✅ تم تحديث السؤال بنجاح');
+      return true;
+    } catch (e) {
+      print('❌ خطأ في تحديث السؤال: $e');
+      return false;
+    }
+  }
+
+  /// البحث في الأسئلة
+  Future<List<Map<String, dynamic>>> searchQuestions(String searchTerm) async {
+    try {
+      print('🔍 البحث عن: $searchTerm');
+
+      final snapshot = await _firestore.collection('questions').get();
+      final searchTermLower = searchTerm.toLowerCase();
+
+      final results =
+          snapshot.docs
+              .where((doc) {
+                final data = doc.data();
+                final question =
+                    (data['question'] as String? ?? '').toLowerCase();
+                final category =
+                    (data['category'] as String? ?? '').toLowerCase();
+
+                return question.contains(searchTermLower) ||
+                    category.contains(searchTermLower);
+              })
+              .map((doc) {
+                final data = doc.data();
+                return {
+                  'id': doc.id,
+                  'question': data['question'] ?? '',
+                  'options': List<String>.from(data['options'] ?? []),
+                  'correct_answer': data['correct_answer'] ?? 0,
+                  'category': data['category'] ?? 'معلومات عامة',
+                  'created_at': data['created_at'],
+                  'usage_count': data['usage_count'] ?? 0,
+                  'source': data['source'] ?? 'unknown',
+                };
+              })
+              .toList();
+
+      print('✅ تم العثور على ${results.length} نتيجة');
+      return results;
+    } catch (e) {
+      print('❌ خطأ في البحث: $e');
+      return [];
+    }
+  }
+
+  /// إحصائيات مفصلة لكل فئة
+  Future<Map<String, dynamic>> getCategoryDetailedStats(
+    String categoryName,
+  ) async {
+    try {
+      print('📊 جاري حساب إحصائيات فئة: $categoryName');
+
+      final snapshot =
+          await _firestore
+              .collection('questions')
+              .where('category', isEqualTo: categoryName)
+              .get();
+
+      int totalQuestions = snapshot.docs.length;
+      int totalUsage = 0;
+      int questionsWithoutUsage = 0;
+      int questionsFromLocalUpload = 0;
+      int questionsFromManualAdd = 0;
+
+      DateTime? oldestQuestion;
+      DateTime? newestQuestion;
+
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final usage = data['usage_count'] as int? ?? 0;
+        final source = data['source'] as String? ?? 'unknown';
+        final createdAt = (data['created_at'] as Timestamp?)?.toDate();
+
+        totalUsage += usage;
+        if (usage == 0) questionsWithoutUsage++;
+
+        if (source == 'local_upload') questionsFromLocalUpload++;
+        if (source == 'manual_add') questionsFromManualAdd++;
+
+        if (createdAt != null) {
+          if (oldestQuestion == null || createdAt.isBefore(oldestQuestion)) {
+            oldestQuestion = createdAt;
+          }
+          if (newestQuestion == null || createdAt.isAfter(newestQuestion)) {
+            newestQuestion = createdAt;
+          }
+        }
+      }
+
+      final stats = {
+        'category_name': categoryName,
+        'total_questions': totalQuestions,
+        'total_usage': totalUsage,
+        'average_usage':
+            totalQuestions > 0 ? (totalUsage / totalQuestions).round() : 0,
+        'questions_without_usage': questionsWithoutUsage,
+        'questions_from_local_upload': questionsFromLocalUpload,
+        'questions_from_manual_add': questionsFromManualAdd,
+        'oldest_question': oldestQuestion,
+        'newest_question': newestQuestion,
+      };
+
+      print('✅ تم حساب إحصائيات فئة $categoryName');
+      return stats;
+    } catch (e) {
+      print('❌ خطأ في حساب إحصائيات الفئة: $e');
+      return {
+        'category_name': categoryName,
+        'total_questions': 0,
+        'total_usage': 0,
+        'average_usage': 0,
+        'questions_without_usage': 0,
+        'questions_from_local_upload': 0,
+        'questions_from_manual_add': 0,
+        'oldest_question': null,
+        'newest_question': null,
+      };
+    }
   }
 }

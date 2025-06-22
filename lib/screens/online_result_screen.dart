@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'game_mode_screen.dart';
+import 'home_screen.dart';
 
 class OnlineResultScreen extends StatefulWidget {
   final String roomCode;
@@ -74,7 +74,7 @@ class _OnlineResultScreenState extends State<OnlineResultScreen>
   void _exitToHome() {
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(builder: (context) => const GameModeScreen()),
+      MaterialPageRoute(builder: (context) => const HomeScreen()),
       (route) => false,
     );
   }

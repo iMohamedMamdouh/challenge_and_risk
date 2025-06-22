@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/game_room.dart'; // Added import for GameRoom
 import '../services/firebase_service.dart';
 import 'online_lobby_screen.dart';
 import 'room_settings_screen.dart';
@@ -19,12 +20,15 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
   final _firebaseService = FirebaseService();
   bool _isLoading = false;
   bool _isCreatingRoom = false; // لتحديد نوع العملية
+  Map<String, dynamic>? _lastRoomData; // بيانات الغرفة الأخيرة
 
   @override
   void initState() {
     super.initState();
     // تشغيل التنظيف التلقائي عند فتح الشاشة
     _performAutoCleanup();
+    // فحص وجود غرفة سابقة
+    _checkForLastRoom();
   }
 
   @override
@@ -41,6 +45,95 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
       await _firebaseService.autoCleanEmptyRooms();
     } catch (e) {
       print('⚠️ فشل في التنظيف التلقائي: $e');
+    }
+  }
+
+  // فحص وجود غرفة سابقة
+  void _checkForLastRoom() async {
+    try {
+      final lastRoom = await _firebaseService.getLastRoomData();
+      if (lastRoom != null) {
+        print('✅ تم العثور على غرفة سابقة: ${lastRoom['roomCode']}');
+        setState(() {
+          _lastRoomData = lastRoom;
+        });
+      } else {
+        print('❌ لا توجد غرفة سابقة');
+      }
+    } catch (e) {
+      print('⚠️ خطأ في فحص الغرفة السابقة: $e');
+    }
+  }
+
+  // العودة للغرفة الأخيرة
+  void _rejoinLastRoom() async {
+    if (_lastRoomData == null) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final roomCode = _lastRoomData!['roomCode'] as String;
+      final playerName = _lastRoomData!['playerName'] as String;
+
+      print('🔄 محاولة العودة للغرفة: $roomCode باسم: $playerName');
+
+      // محاولة الانضمام للغرفة مرة أخرى
+      final room = await _firebaseService.rejoinRoom(roomCode, playerName);
+
+      if (room != null) {
+        print('✅ تم الانضمام للغرفة بنجاح');
+
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder:
+                  (context) => OnlineLobbyScreen(
+                    roomCode: roomCode,
+                    playerName: playerName,
+                    isHost: _lastRoomData!['isHost'] as bool,
+                    timerDuration:
+                        (_lastRoomData!['room'] as GameRoom).timerDuration ??
+                        10,
+                  ),
+            ),
+          );
+        }
+      } else {
+        print('❌ فشل في الانضمام للغرفة');
+        // حذف بيانات الغرفة الأخيرة إذا لم تعد موجودة
+        await _firebaseService.clearLastRoomData();
+        setState(() {
+          _lastRoomData = null;
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('الغرفة غير موجودة أو انتهت صلاحيتها'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print('⚠️ خطأ في العودة للغرفة: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('حدث خطأ أثناء العودة للغرفة: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -93,6 +186,7 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
                   roomCode: room.id,
                   playerName: _nameController.text.trim(),
                   isHost: false,
+                  timerDuration: room.timerDuration ?? 10,
                 ),
           ),
         );
@@ -372,6 +466,140 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
                       ),
 
                       const SizedBox(height: 30),
+
+                      // زر العودة للغرفة - يظهر فقط إذا كان هناك غرفة سابقة
+                      if (_lastRoomData != null) ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.purple.shade400,
+                                Colors.purple.shade600,
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(15),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.purple.withOpacity(0.3),
+                                spreadRadius: 3,
+                                blurRadius: 10,
+                                offset: const Offset(0, 5),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            children: [
+                              const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.history,
+                                    color: Colors.white,
+                                    size: 24,
+                                  ),
+                                  SizedBox(width: 10),
+                                  Text(
+                                    'غرفة سابقة متاحة',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 15,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Column(
+                                  children: [
+                                    Text(
+                                      'الغرفة: ${_lastRoomData!['roomCode']}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 5),
+                                    Text(
+                                      'اللاعب: ${_lastRoomData!['playerName']}',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    if (_lastRoomData!['isHost'] == true)
+                                      const Text(
+                                        '(منشئ الغرفة)',
+                                        style: TextStyle(
+                                          color: Colors.amber,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 15),
+                              ElevatedButton(
+                                onPressed: _isLoading ? null : _rejoinLastRoom,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: Colors.purple.shade600,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                    horizontal: 30,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  elevation: 2,
+                                ),
+                                child:
+                                    _isLoading
+                                        ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                  Colors.purple,
+                                                ),
+                                          ),
+                                        )
+                                        : const Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.play_arrow),
+                                            SizedBox(width: 8),
+                                            Text(
+                                              'العودة للغرفة',
+                                              style: TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 30),
+                      ],
 
                       // Player name input
                       Container(
