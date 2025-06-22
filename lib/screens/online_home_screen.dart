@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
-import '../models/game_room.dart'; // Added import for GameRoom
+import '../models/game_room.dart';
+import '../models/question.dart';
 import '../services/firebase_service.dart';
+import '../widgets/screens/online_home/available_rooms_widget.dart';
+import '../widgets/screens/online_home/room_form_widget.dart';
 import 'online_lobby_screen.dart';
 import 'room_settings_screen.dart';
 
@@ -19,15 +21,16 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
   final _roomCodeController = TextEditingController();
   final _firebaseService = FirebaseService();
   bool _isLoading = false;
-  bool _isCreatingRoom = false; // لتحديد نوع العملية
-  Map<String, dynamic>? _lastRoomData; // بيانات الغرفة الأخيرة
+  bool _isCreatingRoom = true;
+  Map<String, dynamic>? _lastRoomData;
+  bool _showAvailableRooms = false;
+  List<GameRoom> _availableRooms = [];
+  bool _isLoadingRooms = false;
 
   @override
   void initState() {
     super.initState();
-    // تشغيل التنظيف التلقائي عند فتح الشاشة
     _performAutoCleanup();
-    // فحص وجود غرفة سابقة
     _checkForLastRoom();
   }
 
@@ -38,7 +41,6 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
     super.dispose();
   }
 
-  // تشغيل التنظيف التلقائي في الخلفية
   void _performAutoCleanup() async {
     try {
       print('🤖 تشغيل التنظيف التلقائي في الخلفية...');
@@ -48,7 +50,6 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
     }
   }
 
-  // فحص وجود غرفة سابقة
   void _checkForLastRoom() async {
     try {
       final lastRoom = await _firebaseService.getLastRoomData();
@@ -65,7 +66,6 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
     }
   }
 
-  // العودة للغرفة الأخيرة
   void _rejoinLastRoom() async {
     if (_lastRoomData == null) return;
 
@@ -79,7 +79,6 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
 
       print('🔄 محاولة العودة للغرفة: $roomCode باسم: $playerName');
 
-      // محاولة الانضمام للغرفة مرة أخرى
       final room = await _firebaseService.rejoinRoom(roomCode, playerName);
 
       if (room != null) {
@@ -103,7 +102,6 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
         }
       } else {
         print('❌ فشل في الانضمام للغرفة');
-        // حذف بيانات الغرفة الأخيرة إذا لم تعد موجودة
         await _firebaseService.clearLastRoomData();
         setState(() {
           _lastRoomData = null;
@@ -138,14 +136,13 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
   }
 
   void _createRoom() async {
-    setState(() => _isCreatingRoom = true);
+    setState(() => _isLoading = true);
 
     if (!_formKey.currentState!.validate()) {
-      setState(() => _isCreatingRoom = false);
+      setState(() => _isLoading = false);
       return;
     }
 
-    // الانتقال إلى صفحة إعدادات الغرفة بدلاً من إنشاء الغرفة مباشرة
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -155,15 +152,16 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
       ),
     );
 
-    setState(() => _isCreatingRoom = false);
+    setState(() => _isLoading = false);
   }
 
   void _joinRoom() async {
-    setState(() => _isCreatingRoom = false);
-
-    if (!_formKey.currentState!.validate()) return;
-
     setState(() => _isLoading = true);
+
+    if (!_formKey.currentState!.validate()) {
+      setState(() => _isLoading = false);
+      return;
+    }
 
     try {
       print('🎮 بدء محاولة الانضمام للغرفة...');
@@ -193,10 +191,8 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
       } else if (mounted) {
         print('⚠️ فشل الانضمام - السبب غير محدد');
 
-        // معالجة أخطاء أكثر تفصيلاً
         String errorMessage = 'لم يتم العثور على الغرفة';
 
-        // محاولة فهم السبب بتشغيل فحص سريع
         try {
           final availableRooms = await _firebaseService.getAvailableRooms();
           if (availableRooms['success'] == true) {
@@ -233,7 +229,6 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
         String errorTitle = 'حدث خطأ أثناء الانضمام';
         String errorMessage = 'خطأ غير معروف';
 
-        // تحليل نوع الخطأ
         if (e.toString().contains('permission-denied')) {
           errorTitle = 'مشكلة في الأذونات';
           errorMessage =
@@ -261,21 +256,11 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
     }
   }
 
-  void _showErrorDialog(String message) {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('خطأ'),
-            content: Text(message),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('موافق'),
-              ),
-            ],
-          ),
-    );
+  void _toggleMode() {
+    setState(() {
+      _isCreatingRoom = !_isCreatingRoom;
+      _roomCodeController.clear();
+    });
   }
 
   void _showDetailedErrorDialog(
@@ -357,7 +342,7 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
               ElevatedButton(
                 onPressed: () {
                   Navigator.pop(context);
-                  _showAvailableRooms();
+                  _loadAvailableRooms();
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.blue,
@@ -370,20 +355,184 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
     );
   }
 
-  void _showAvailableRooms() async {
+  void _loadAvailableRooms() async {
+    setState(() {
+      _isLoadingRooms = true;
+      _showAvailableRooms = true;
+    });
+
+    try {
+      await _firebaseService.autoCleanEmptyRooms();
+      final result = await _firebaseService.getAvailableRooms();
+
+      print('📥 نتيجة استدعاء getAvailableRooms:');
+      print('   نجح: ${result['success']}');
+      print('   عدد الغرف: ${(result['rooms'] as List).length}');
+
+      if (mounted && result['success'] == true) {
+        final roomsData = result['rooms'] as List<dynamic>;
+
+        // طباعة تفاصيل كل غرفة مُستقبلة
+        for (int i = 0; i < roomsData.length; i++) {
+          final roomData = roomsData[i] as Map<String, dynamic>;
+          print('🏠 غرفة ${i + 1} (${roomData['id']}):');
+          print('   👥 اللاعبين الخام: ${roomData['players']}');
+          print('   ❓ الأسئلة الخام: ${roomData['questions']}');
+          print('   🎯 الحد الأقصى: ${roomData['maxPlayers']}');
+          print('   📊 نوع اللاعبين: ${roomData['players'].runtimeType}');
+          print('   📊 نوع الأسئلة: ${roomData['questions'].runtimeType}');
+          print(
+            '   📏 طول قائمة اللاعبين: ${(roomData['players'] as List).length}',
+          );
+          print(
+            '   📏 طول قائمة الأسئلة: ${(roomData['questions'] as List).length}',
+          );
+        }
+
+        setState(() {
+          _availableRooms =
+              roomsData.map((roomData) {
+                final data = roomData as Map<String, dynamic>;
+
+                print('🔧 معالجة غرفة: ${data['id']}');
+
+                // تحويل بيانات اللاعبين
+                final playersData = data['players'] as List<dynamic>? ?? [];
+                print('   👥 بيانات اللاعبين الواردة: $playersData');
+                print('   👥 عدد اللاعبين الواردة: ${playersData.length}');
+
+                final players =
+                    playersData.map((playerData) {
+                      print('   👤 معالجة لاعب: $playerData');
+                      final playerMap = playerData as Map<String, dynamic>;
+                      return OnlinePlayer(
+                        id: playerMap['id'] ?? '',
+                        name: playerMap['name'] ?? '',
+                        score: playerMap['score'] ?? 0,
+                        isHost: playerMap['isHost'] ?? false,
+                        isOnline: playerMap['isOnline'] ?? true,
+                      );
+                    }).toList();
+
+                print('   ✅ تم إنشاء ${players.length} لاعب');
+
+                // تحويل بيانات الأسئلة
+                final questionsData = data['questions'] as List<dynamic>? ?? [];
+                print(
+                  '   ❓ بيانات الأسئلة الواردة: ${questionsData.length} سؤال',
+                );
+
+                final questions =
+                    questionsData.map((questionData) {
+                      print('   ❓ معالجة سؤال: $questionData');
+                      final questionMap = questionData as Map<String, dynamic>;
+                      return Question.fromJson(questionMap);
+                    }).toList();
+
+                print('   ✅ تم إنشاء ${questions.length} سؤال');
+
+                final gameRoom = GameRoom(
+                  id: data['id'] ?? '',
+                  hostId: data['hostId'] ?? '',
+                  players: players,
+                  maxPlayers: data['maxPlayers'] ?? 4,
+                  state: GameState.values[data['state'] ?? 0],
+                  questions: questions,
+                  currentQuestionIndex: data['currentQuestionIndex'] ?? 0,
+                  currentPlayerIndex: data['currentPlayerIndex'] ?? 0,
+                  createdAt: DateTime.now(),
+                  timerDuration: data['timerDuration'],
+                );
+
+                print('   🏁 تم إنشاء GameRoom بنجاح:');
+                print(
+                  '      👥 عدد اللاعبين النهائي: ${gameRoom.players.length}',
+                );
+                print(
+                  '      ❓ عدد الأسئلة النهائي: ${gameRoom.questions.length}',
+                );
+                print('      🎯 الحد الأقصى: ${gameRoom.maxPlayers}');
+
+                return gameRoom;
+              }).toList();
+        });
+
+        print('🎉 تم تحديث الحالة النهائية:');
+        print('   📊 عدد الغرف في _availableRooms: ${_availableRooms.length}');
+        for (int i = 0; i < _availableRooms.length; i++) {
+          final room = _availableRooms[i];
+          print('   🏠 غرفة ${i + 1}: ${room.id}');
+          print('      👥 لاعبين: ${room.players.length}/${room.maxPlayers}');
+          print('      ❓ أسئلة: ${room.questions.length}');
+        }
+      }
+    } catch (e) {
+      print('❌ خطأ في تحميل الغرف: $e');
+      print('🔍 تفاصيل الخطأ: ${e.toString()}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ في تحميل الغرف: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingRooms = false);
+      }
+    }
+  }
+
+  void _refreshAvailableRooms() {
+    _loadAvailableRooms();
+  }
+
+  void _joinRoomFromList(String roomCode) async {
+    if (_nameController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('يرجى إدخال اسم اللاعب أولاً'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
-      // تشغيل التنظيف التلقائي للغرف الفارغة أولاً
-      await _firebaseService.autoCleanEmptyRooms();
+      final room = await _firebaseService.joinRoomWithAutoClean(
+        roomCode.toUpperCase(),
+        _nameController.text.trim(),
+      );
 
-      // عرض الغرف المتاحة
-      final result = await _firebaseService.getAvailableRooms();
-
+      if (room != null && mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder:
+                (context) => OnlineLobbyScreen(
+                  roomCode: room.id,
+                  playerName: _nameController.text.trim(),
+                  isHost: false,
+                  timerDuration: room.timerDuration ?? 10,
+                ),
+          ),
+        );
+      } else if (mounted) {
+        _showDetailedErrorDialog(
+          'فشل الانضمام للغرفة',
+          'لم يتم العثور على الغرفة أو قد تكون ممتلئة',
+          roomCode,
+        );
+      }
+    } catch (e) {
       if (mounted) {
-        showDialog(
-          context: context,
-          builder: (context) => _AvailableRoomsDialog(result: result),
+        _showDetailedErrorDialog(
+          'خطأ في الانضمام',
+          'حدث خطأ أثناء الانضمام للغرفة: $e',
+          roomCode,
         );
       }
     } finally {
@@ -393,698 +542,296 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
     }
   }
 
+  void _hideAvailableRooms() {
+    setState(() {
+      _showAvailableRooms = false;
+      _availableRooms.clear();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.deepPurple.shade50,
+      backgroundColor: Colors.grey.shade100,
       appBar: AppBar(
         title: const Text(
           'اللعب الأونلاين',
           style: TextStyle(
-            fontSize: 24,
+            fontSize: 22,
             fontWeight: FontWeight.bold,
             color: Colors.white,
           ),
         ),
-        backgroundColor: Colors.deepPurple,
+        backgroundColor: Colors.deepPurple.shade600,
+        foregroundColor: Colors.white,
         centerTitle: true,
-        elevation: 0,
+        elevation: 4,
       ),
       body:
           _isLoading
               ? const Center(
-                child: CircularProgressIndicator(color: Colors.deepPurple),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(color: Colors.deepPurple),
+                    SizedBox(height: 16),
+                    Text(
+                      'جاري التحميل...',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.deepPurple,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
               )
               : SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const SizedBox(height: 20),
-
-                      // Online gaming info
+                child: Column(
+                  children: [
+                    // زر العودة للغرفة
+                    if (_lastRoomData != null) ...[
                       Container(
+                        width: double.infinity,
                         padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(15),
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.amber.shade400,
+                              Colors.orange.shade600,
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(20),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.grey.withOpacity(0.3),
-                              spreadRadius: 2,
-                              blurRadius: 5,
-                              offset: const Offset(0, 3),
+                              color: Colors.orange.withOpacity(0.3),
+                              spreadRadius: 3,
+                              blurRadius: 15,
+                              offset: const Offset(0, 8),
                             ),
                           ],
                         ),
-                        child: const Column(
+                        child: Column(
                           children: [
-                            Icon(Icons.wifi, size: 50, color: Colors.green),
-                            SizedBox(height: 10),
-                            Text(
-                              'اللعب الأونلاين',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.deepPurple,
-                              ),
-                            ),
-                            SizedBox(height: 10),
-                            Text(
-                              'أنشئ غرفة جديدة أو انضم لغرفة موجودة باستخدام الكود',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 30),
-
-                      // زر العودة للغرفة - يظهر فقط إذا كان هناك غرفة سابقة
-                      if (_lastRoomData != null) ...[
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(20),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Colors.purple.shade400,
-                                Colors.purple.shade600,
-                              ],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                            borderRadius: BorderRadius.circular(15),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.purple.withOpacity(0.3),
-                                spreadRadius: 3,
-                                blurRadius: 10,
-                                offset: const Offset(0, 5),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            children: [
-                              const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.history,
+                            const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.history,
+                                  color: Colors.white,
+                                  size: 28,
+                                ),
+                                SizedBox(width: 12),
+                                Text(
+                                  'غرفة سابقة متاحة',
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
                                     color: Colors.white,
-                                    size: 24,
                                   ),
-                                  SizedBox(width: 10),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(15),
+                              ),
+                              child: Column(
+                                children: [
                                   Text(
-                                    'غرفة سابقة متاحة',
-                                    style: TextStyle(
+                                    'الغرفة: ${_lastRoomData!['roomCode']}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
                                       fontSize: 18,
                                       fontWeight: FontWeight.bold,
-                                      color: Colors.white,
+                                      letterSpacing: 1,
                                     ),
                                   ),
-                                ],
-                              ),
-                              const SizedBox(height: 10),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 15,
-                                  vertical: 8,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.2),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Column(
-                                  children: [
-                                    Text(
-                                      'الغرفة: ${_lastRoomData!['roomCode']}',
-                                      style: const TextStyle(
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'اللاعب: ${_lastRoomData!['playerName']}',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                  if (_lastRoomData!['isHost'] == true)
+                                    const Text(
+                                      '(منشئ الغرفة)',
+                                      style: TextStyle(
                                         color: Colors.white,
-                                        fontSize: 16,
+                                        fontSize: 14,
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
-                                    const SizedBox(height: 5),
-                                    Text(
-                                      'اللاعب: ${_lastRoomData!['playerName']}',
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                    if (_lastRoomData!['isHost'] == true)
-                                      const Text(
-                                        '(منشئ الغرفة)',
-                                        style: TextStyle(
-                                          color: Colors.amber,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                  ],
-                                ),
+                                ],
                               ),
-                              const SizedBox(height: 15),
-                              ElevatedButton(
+                            ),
+                            const SizedBox(height: 20),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 56,
+                              child: ElevatedButton.icon(
                                 onPressed: _isLoading ? null : _rejoinLastRoom,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.white,
-                                  foregroundColor: Colors.purple.shade600,
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 12,
-                                    horizontal: 30,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  elevation: 2,
-                                ),
-                                child:
+                                icon:
                                     _isLoading
-                                        ? const SizedBox(
+                                        ? SizedBox(
                                           width: 20,
                                           height: 20,
                                           child: CircularProgressIndicator(
                                             strokeWidth: 2,
                                             valueColor:
                                                 AlwaysStoppedAnimation<Color>(
-                                                  Colors.purple,
+                                                  Colors.orange.shade600,
                                                 ),
                                           ),
                                         )
-                                        : const Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(Icons.play_arrow),
-                                            SizedBox(width: 8),
-                                            Text(
-                                              'العودة للغرفة',
-                                              style: TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
+                                        : const Icon(Icons.play_arrow),
+                                label: const Text(
+                                  'العودة للغرفة',
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: Colors.orange.shade600,
+                                  elevation: 6,
+                                  shadowColor: Colors.orange.withOpacity(0.3),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(15),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 30),
+                    ],
+
+                    // استخدام RoomFormWidget
+                    RoomFormWidget(
+                      formKey: _formKey,
+                      nameController: _nameController,
+                      roomCodeController: _roomCodeController,
+                      isLoading: _isLoading,
+                      isCreatingRoom: _isCreatingRoom,
+                      onCreateRoom: _createRoom,
+                      onJoinRoom: _joinRoom,
+                      onToggleMode: _toggleMode,
+                      onShowAvailableRooms: () {
+                        if (_showAvailableRooms) {
+                          _hideAvailableRooms();
+                        } else {
+                          _loadAvailableRooms();
+                        }
+                      },
+                      showAvailableRooms: _showAvailableRooms,
+                      isLoadingRooms: _isLoadingRooms,
+                    ),
+
+                    // عرض الغرف المتاحة
+                    if (_showAvailableRooms) ...[
+                      const SizedBox(height: 20),
+                      AvailableRoomsWidget(
+                        availableRooms: _availableRooms,
+                        isLoading: _isLoadingRooms,
+                        onJoinRoom: _joinRoomFromList,
+                        onRefresh: _refreshAvailableRooms,
+                      ),
+                    ],
+
+                    const SizedBox(height: 30),
+
+                    // معلومات إضافية
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Colors.blue.shade50, Colors.cyan.shade50],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: Colors.blue.shade200,
+                          width: 1,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.info_outline,
+                                color: Colors.blue.shade600,
+                                size: 24,
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                'كيفية اللعب الأونلاين:',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.blue.shade700,
+                                ),
                               ),
                             ],
                           ),
-                        ),
-                        const SizedBox(height: 30),
-                      ],
-
-                      // Player name input
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(15),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.grey.withOpacity(0.3),
-                              spreadRadius: 2,
-                              blurRadius: 5,
-                              offset: const Offset(0, 3),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          children: [
-                            const Text(
-                              'اسم اللاعب',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.deepPurple,
-                              ),
-                            ),
-                            const SizedBox(height: 15),
-                            TextFormField(
-                              controller: _nameController,
-                              textAlign: TextAlign.right,
-                              decoration: InputDecoration(
-                                labelText: 'أدخل اسمك',
-                                prefixIcon: Icon(
-                                  Icons.person,
-                                  color: Colors.deepPurple.shade300,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  borderSide: const BorderSide(
-                                    color: Colors.deepPurple,
-                                    width: 2,
-                                  ),
-                                ),
-                              ),
-                              validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'يرجى إدخال اسمك';
-                                }
-                                if (value.trim().length < 2) {
-                                  return 'الاسم يجب أن يكون أكثر من حرف واحد';
-                                }
-                                return null;
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 30),
-
-                      // Create room section
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(15),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.grey.withOpacity(0.3),
-                              spreadRadius: 2,
-                              blurRadius: 5,
-                              offset: const Offset(0, 3),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          children: [
-                            const Row(
-                              children: [
-                                Icon(Icons.add_circle, color: Colors.green),
-                                SizedBox(width: 10),
-                                Text(
-                                  'إنشاء غرفة جديدة',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.deepPurple,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 15),
-                            const Text(
-                              'أدخل اسمك أولاً، ثم اضغط على إعدادات الغرفة لتخصيص اللعبة',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey,
-                              ),
-                            ),
-                            const SizedBox(height: 20),
-                            ElevatedButton(
-                              onPressed: _createRoom,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 15,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
-                              child: const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.settings),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    'إعداد الغرفة',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 30),
-
-                      // Join room section
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(15),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.grey.withOpacity(0.3),
-                              spreadRadius: 2,
-                              blurRadius: 5,
-                              offset: const Offset(0, 3),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          children: [
-                            const Row(
-                              children: [
-                                Icon(Icons.meeting_room, color: Colors.blue),
-                                SizedBox(width: 10),
-                                Text(
-                                  'الانضمام لغرفة',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.deepPurple,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 15),
-                            TextFormField(
-                              controller: _roomCodeController,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 2,
-                              ),
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                                LengthLimitingTextInputFormatter(6),
-                              ],
-                              decoration: InputDecoration(
-                                labelText: 'كود الغرفة',
-                                hintText: '123456',
-                                helperText: 'مطلوب للانضمام لغرفة موجودة',
-                                prefixIcon: Icon(
-                                  Icons.vpn_key,
-                                  color: Colors.deepPurple.shade300,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  borderSide: const BorderSide(
-                                    color: Colors.deepPurple,
-                                    width: 2,
-                                  ),
-                                ),
-                              ),
-                              validator: (value) {
-                                // التحقق من كود الغرفة فقط عند الانضمام
-                                if (!_isCreatingRoom) {
-                                  if (value == null || value.trim().isEmpty) {
-                                    return 'يرجى إدخال كود الغرفة';
-                                  }
-                                  if (value.trim().length != 6) {
-                                    return 'كود الغرفة يجب أن يكون 6 أرقام';
-                                  }
-                                }
-                                return null;
-                              },
-                            ),
-                            const SizedBox(height: 20),
-                            ElevatedButton(
-                              onPressed: _joinRoom,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blue,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 15,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
-                              child: const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.login),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    'انضمام للغرفة',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                            const SizedBox(height: 15),
-
-                            // أزرار إضافية - إزالة زر التنظيف وزر الفحص السريع
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton(
-                                onPressed:
-                                    _isLoading ? null : _showAvailableRooms,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.orange,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 12,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                ),
-                                child: const Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.list, size: 20),
-                                    SizedBox(width: 8),
-                                    Text(
-                                      'عرض الغرف المتاحة',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 30),
-
-                      // Instructions
-                      Container(
-                        padding: const EdgeInsets.all(15),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.shade50,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: Colors.blue.shade200,
-                            width: 1,
+                          const SizedBox(height: 16),
+                          _buildInfoItem(
+                            '• لإنشاء غرفة جديدة: أدخل اسمك واضغط "إنشاء غرفة جديدة"',
+                            Icons.add_circle_outline,
                           ),
-                        ),
-                        child: const Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(Icons.info, color: Colors.blue, size: 20),
-                                SizedBox(width: 8),
-                                Text(
-                                  'كيفية اللعب الأونلاين:',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.blue,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            SizedBox(height: 10),
-                            Text(
-                              '• لإنشاء غرفة جديدة: أدخل اسمك واضغط "إعدادات الغرفة" لتخصيص اللعبة\n'
-                              '• للانضمام لغرفة موجودة: أدخل اسمك وكود الغرفة\n'
-                              '• شارك كود الغرفة مع أصدقائك بعد إنشائها\n'
-                              '• انتظر حتى ينضم جميع اللاعبين وابدأ اللعب!',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.blue,
-                              ),
-                            ),
-                          ],
-                        ),
+                          const SizedBox(height: 8),
+                          _buildInfoItem(
+                            '• للانضمام لغرفة موجودة: أدخل اسمك وكود الغرفة',
+                            Icons.login,
+                          ),
+                          const SizedBox(height: 8),
+                          _buildInfoItem(
+                            '• شارك كود الغرفة مع أصدقائك بعد إنشائها',
+                            Icons.share,
+                          ),
+                          const SizedBox(height: 8),
+                          _buildInfoItem(
+                            '• انتظر حتى ينضم جميع اللاعبين وابدأ اللعب!',
+                            Icons.play_arrow,
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
     );
   }
-}
 
-// نافذة عرض الغرف المتاحة
-class _AvailableRoomsDialog extends StatelessWidget {
-  final Map<String, dynamic> result;
-
-  const _AvailableRoomsDialog({required this.result});
-
-  @override
-  Widget build(BuildContext context) {
-    final rooms = result['rooms'] as List<dynamic>;
-    final isSuccess = result['success'] as bool;
-
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: const Row(
-        children: [
-          Icon(Icons.list, color: Colors.blue),
-          SizedBox(width: 10),
-          Text('الغرف المتاحة'),
-        ],
-      ),
-      content: SizedBox(
-        width: double.maxFinite,
-        height: 400,
-        child:
-            isSuccess
-                ? rooms.isNotEmpty
-                    ? Column(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 16),
-                          child: Text(
-                            'تم العثور على ${rooms.length} غرفة متاحة:',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: ListView.builder(
-                            itemCount: rooms.length,
-                            itemBuilder: (context, index) {
-                              final room = rooms[index] as Map<String, dynamic>;
-                              return Card(
-                                margin: const EdgeInsets.only(bottom: 8),
-                                child: ListTile(
-                                  leading: Container(
-                                    padding: const EdgeInsets.all(8),
-                                    decoration: BoxDecoration(
-                                      color: Colors.blue.shade100,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Icon(
-                                      Icons.meeting_room,
-                                      color: Colors.blue.shade600,
-                                    ),
-                                  ),
-                                  title: Text(
-                                    'غرفة ${room['id']}',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  subtitle: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'اللاعبين: ${room['playersCount']}/${room['maxPlayers']}',
-                                      ),
-                                      Text(
-                                        'المنشئ: ${room['hostName'] ?? 'غير معروف'}',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey.shade600,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  trailing:
-                                  // زر نسخ الكود فقط
-                                  IconButton(
-                                    icon: const Icon(Icons.copy),
-                                    onPressed: () {
-                                      Clipboard.setData(
-                                        ClipboardData(
-                                          text: room['id'].toString(),
-                                        ),
-                                      );
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('تم نسخ كود الغرفة'),
-                                          duration: Duration(seconds: 2),
-                                        ),
-                                      );
-                                    },
-                                    tooltip: 'نسخ الكود',
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                    )
-                    : const Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.search_off, size: 64, color: Colors.grey),
-                          SizedBox(height: 16),
-                          Text(
-                            'لا توجد غرف متاحة حالياً',
-                            style: TextStyle(fontSize: 16, color: Colors.grey),
-                          ),
-                          SizedBox(height: 8),
-                          Text(
-                            'يمكنك إنشاء غرفة جديدة',
-                            style: TextStyle(fontSize: 14, color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    )
-                : Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.error, size: 64, color: Colors.red),
-                      const SizedBox(height: 16),
-                      Text(
-                        'خطأ: ${result['error']}',
-                        style: const TextStyle(color: Colors.red, fontSize: 16),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('إغلاق'),
-        ),
-        if (isSuccess && rooms.isNotEmpty)
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // يمكن إضافة تحديث للقائمة هنا
-            },
-            child: const Text('تحديث'),
+  Widget _buildInfoItem(String text, IconData icon) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: Colors.blue.shade600),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.blue.shade700,
+              height: 1.4,
+            ),
           ),
+        ),
       ],
     );
   }

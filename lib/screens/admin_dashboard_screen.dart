@@ -225,11 +225,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
           tabs: const [
-            Tab(icon: Icon(Icons.dashboard), text: 'لوحة المعلومات'),
-            Tab(icon: Icon(Icons.category), text: 'إدارة الفئات'),
-            Tab(icon: Icon(Icons.quiz), text: 'إدارة الأسئلة'),
-            Tab(icon: Icon(Icons.people), text: 'إدارة المستخدمين'),
-            Tab(icon: Icon(Icons.delete_sweep), text: 'العناصر المحذوفة'),
+            Tab(icon: Icon(Icons.dashboard), text: 'المعلومات'),
+            Tab(icon: Icon(Icons.category), text: 'الفئات'),
+            Tab(icon: Icon(Icons.quiz), text: 'الأسئلة'),
+            Tab(icon: Icon(Icons.people), text: 'المستخدمين'),
+            Tab(icon: Icon(Icons.delete_sweep), text: 'المحذوفات'),
           ],
         ),
       ),
@@ -555,28 +555,62 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             ],
           ),
           const SizedBox(height: 16),
+          // الصف الأول - إضافة سؤال وإضافة تحدي
           Row(
             children: [
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: () => _tabController.animateTo(1),
-                  icon: const Icon(Icons.add),
+                  onPressed: _showAddQuestionDialog,
+                  icon: const Icon(Icons.quiz),
                   label: const Text('إضافة سؤال'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
+                    backgroundColor: Colors.deepPurple,
                     foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: _uploadQuestions,
-                  icon: const Icon(Icons.upload),
-                  label: const Text('رفع الأسئلة'),
+                  onPressed: _showAddChallengeDialog,
+                  icon: const Icon(Icons.sports_kabaddi),
+                  label: const Text('إضافة تحدي'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.orange,
                     foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // الصف الثاني - رفع الأسئلة والتحديات
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _uploadQuestions,
+                  icon: const Icon(Icons.upload_file),
+                  label: const Text('رفع الأسئلة'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _uploadChallenges,
+                  icon: const Icon(Icons.upload),
+                  label: const Text('رفع التحديات'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                 ),
               ),

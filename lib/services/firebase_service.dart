@@ -884,36 +884,48 @@ class FirebaseService {
                   return null;
                 }
 
-                final players = data['players'] as List<dynamic>? ?? [];
+                print('📄 معالجة غرفة: ${doc.id}');
 
-                // البحث عن المضيف (المنشئ) من قائمة اللاعبين
-                String hostName = 'غير معروف';
-                final hostId = data['hostId'] as String? ?? '';
-
-                for (final playerData in players) {
-                  if (playerData is Map<String, dynamic>) {
-                    final player = playerData;
-                    if (player['id'] == hostId) {
-                      hostName = player['name'] as String? ?? 'غير معروف';
-                      break;
-                    }
-                  }
-                }
-
-                return {
+                // إرسال البيانات الكاملة للغرفة
+                final roomData = {
                   'id': doc.id,
                   'hostId': data['hostId'],
-                  'hostName': hostName,
-                  'playersCount': players.length,
-                  'maxPlayers': data['maxPlayers'],
+                  'players': data['players'] ?? [],
+                  'maxPlayers': data['maxPlayers'] ?? 4,
+                  'state': data['state'] ?? 0,
+                  'questions': data['questions'] ?? [],
+                  'currentQuestionIndex': data['currentQuestionIndex'] ?? 0,
+                  'currentPlayerIndex': data['currentPlayerIndex'] ?? 0,
                   'createdAt': data['createdAt'],
+                  'timerDuration': data['timerDuration'],
                 };
+
+                print(
+                  '👥 عدد اللاعبين: ${(data['players'] as List?)?.length ?? 0}',
+                );
+                print(
+                  '❓ عدد الأسئلة: ${(data['questions'] as List?)?.length ?? 0}',
+                );
+                print('🎯 الحد الأقصى للاعبين: ${data['maxPlayers'] ?? 4}');
+
+                return roomData;
               })
               .where((room) => room != null)
               .toList();
 
       result['success'] = true;
       print('✅ تم العثور على ${result['rooms'].length} غرفة متاحة');
+      print('📊 إجمالي البيانات المُرسلة: ${result['rooms'].length} غرفة');
+
+      // طباعة تفاصيل كل غرفة للتأكد
+      for (int i = 0; i < result['rooms'].length; i++) {
+        final room = result['rooms'][i];
+        print('🏠 غرفة ${i + 1}: ${room['id']}');
+        print(
+          '   👥 لاعبين: ${(room['players'] as List).length}/${room['maxPlayers']}',
+        );
+        print('   ❓ أسئلة: ${(room['questions'] as List).length}');
+      }
     } catch (e) {
       result['error'] = 'فشل في البحث عن الغرف: $e';
       print('❌ فشل في البحث عن الغرف: $e');
