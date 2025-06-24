@@ -12,6 +12,8 @@ class RoomFormWidget extends StatelessWidget {
   final VoidCallback? onShowAvailableRooms;
   final bool showAvailableRooms;
   final bool isLoadingRooms;
+  final bool isLoggedIn;
+  final bool isNameReadOnly;
 
   const RoomFormWidget({
     super.key,
@@ -26,6 +28,8 @@ class RoomFormWidget extends StatelessWidget {
     this.onShowAvailableRooms,
     this.showAvailableRooms = false,
     this.isLoadingRooms = false,
+    this.isLoggedIn = false,
+    this.isNameReadOnly = false,
   });
 
   @override
@@ -156,9 +160,10 @@ class RoomFormWidget extends StatelessWidget {
             // حقل اسم اللاعب
             TextFormField(
               controller: nameController,
+              readOnly: isNameReadOnly,
               decoration: InputDecoration(
                 labelText: 'اسم اللاعب',
-                hintText: 'أدخل اسمك',
+                hintText: isLoggedIn ? 'اسم المستخدم المسجل' : 'أدخل اسمك',
                 prefixIcon: Icon(
                   Icons.person,
                   color: Colors.deepPurple.shade600,
@@ -169,17 +174,33 @@ class RoomFormWidget extends StatelessWidget {
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(15),
-                  borderSide: BorderSide(color: Colors.deepPurple.shade300),
+                  borderSide: BorderSide(
+                    color:
+                        isNameReadOnly
+                            ? Colors.grey.shade400
+                            : Colors.deepPurple.shade300,
+                  ),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(15),
                   borderSide: BorderSide(
-                    color: Colors.deepPurple.shade600,
+                    color:
+                        isNameReadOnly
+                            ? Colors.grey.shade400
+                            : Colors.deepPurple.shade600,
                     width: 2,
                   ),
                 ),
                 filled: true,
-                fillColor: Colors.deepPurple.shade50,
+                fillColor:
+                    isNameReadOnly
+                        ? Colors.grey.shade100
+                        : Colors.deepPurple.shade50,
+              ),
+              style: TextStyle(
+                color: isNameReadOnly ? Colors.grey.shade700 : Colors.black,
+                fontWeight:
+                    isNameReadOnly ? FontWeight.w600 : FontWeight.normal,
               ),
               validator: (value) {
                 if (value == null || value.trim().isEmpty) {
@@ -194,6 +215,7 @@ class RoomFormWidget extends StatelessWidget {
                 return null;
               },
             ),
+
             const SizedBox(height: 20),
 
             // حقل كود الغرفة (فقط للانضمام)

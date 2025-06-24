@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/game_room.dart';
 import '../models/question.dart';
+import '../services/audio_service.dart';
 import '../services/firebase_service.dart';
 import 'home_screen.dart'; // Added import for HomeScreen
 import 'online_challenge_screen.dart';
@@ -27,6 +30,7 @@ class OnlineQuestionScreen extends StatefulWidget {
 
 class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
   final FirebaseService _firebaseService = FirebaseService();
+  final AudioService _audioService = AudioService();
   GameRoom? _currentRoom;
   List<Question> _questions = [];
   int _currentQuestionIndex = 0;
@@ -34,36 +38,28 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
   bool _isAnswering = false;
   bool _isGameFinished = false;
   int? _selectedAnswerIndex;
-  final Random _random = Random();
-
-  // نظام الدوران المحسن
-  List<int> _availablePlayerIndices = [];
-  int? _lastPlayerIndex; // لتجنب تكرار نفس اللاعب مرتين متتاليتين
 
   // متغيرات جديدة لعرض الإجابة الصحيحة
   bool _showingCorrectAnswer = false;
   int? _correctAnswerIndex;
 
+  // متغيرات جديدة للتحدي والمؤثرات الصوتية
+  bool _isChallengeActive = false;
+  String _currentChallenge = '';
+
   @override
   void initState() {
     super.initState();
+    _initializeAudio();
     _listenToGameUpdates();
-    // بدء مراقبة عدم النشاط في شاشة الأسئلة أيضاً
-    _firebaseService.startInactivityMonitoring(widget.roomCode);
     _firebaseService.startPeriodicCleanup(
       widget.roomCode,
     ); // التنظيف الدوري (إزالة اللاعبين المنقطعين معطلة)
-    // تحديث حالة اللاعب الحالي كمتصل
-    _firebaseService.updatePlayerStatus(widget.roomCode, true);
   }
 
   @override
   void dispose() {
-    // تحديث حالة اللاعب كغير متصل عند مغادرة الصفحة
-    _firebaseService.updatePlayerStatus(widget.roomCode, false);
-
-    // إيقاف مراقبة عدم النشاط والتنظيف الدوري
-    _firebaseService.stopInactivityMonitoring();
+    // تم إزالة إيقاف مراقبة عدم النشاط
     _firebaseService.stopPeriodicCleanup();
 
     super.dispose();
@@ -106,19 +102,17 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
               }
             });
 
-            // تهيئة النظام إذا لم يتم تهيئته
-            if (_availablePlayerIndices.isEmpty && room.players.isNotEmpty) {
-              _initializeRound();
-            }
-
-            // إشعار عند تغيير الدور
-            if (playerChanged && mounted) {
-              _showTurnNotification();
-            }
-
             // إشعار حالة التحدي
             if (hasChallengeActive && mounted && !_isCurrentPlayerTurn()) {
               _showChallengeWaitingMessage();
+            }
+
+            // التحقق من وجود تحدي نشط للاعب الحالي
+            if (hasChallengeActive &&
+                mounted &&
+                _isCurrentPlayerTurn() &&
+                !_isChallengeActive) {
+              _showChallenge();
             }
           }
         })
@@ -133,28 +127,6 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
             );
           }
         });
-  }
-
-  void _showTurnNotification() {
-    if (_isCurrentPlayerTurn()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Row(
-            children: [
-              Icon(Icons.play_arrow, color: Colors.white),
-              SizedBox(width: 8),
-              Text(
-                'حان دورك! اختر إجابتك',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
   }
 
   // عرض رسالة انتظار التحدي
@@ -186,87 +158,8 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
   // تهيئة جولة جديدة مع منع التكرار
   void _initializeRound() {
     if (_currentRoom != null && _currentRoom!.players.isNotEmpty) {
-      _availablePlayerIndices = List.generate(
-        _currentRoom!.players.length,
-        (index) => index,
-      );
-
-      // في السؤال الأول، ابدأ باللاعب الأول
-      if (_currentQuestionIndex == 0) {
-        _currentPlayerIndex = 0;
-        _lastPlayerIndex = null;
-        _availablePlayerIndices.remove(0);
-      } else {
-        // لا نغير الدور محلياً، فقط نستمع لتحديثات Firebase
-        _availablePlayerIndices.remove(_currentPlayerIndex);
-      }
-    }
-  }
-
-  // اختيار لاعب عشوائي مع منع التكرار (فقط للمضيف)
-  void _selectRandomPlayer() {
-    // فقط المضيف يمكنه تغيير الأدوار لتجنب التضارب
-    if (_currentRoom == null ||
-        _currentRoom!.players.isEmpty ||
-        !_isCurrentPlayerHost()) {
-      return;
-    }
-
-    if (_availablePlayerIndices.isEmpty) {
-      // بدء جولة جديدة
       _currentPlayerIndex = 0;
-      _lastPlayerIndex = null;
-      _availablePlayerIndices = List.generate(
-        _currentRoom!.players.length,
-        (index) => index,
-      );
     }
-
-    // إنشاء قائمة اللاعبين المؤهلين (استبعاد اللاعب السابق إذا أمكن)
-    List<int> eligiblePlayers = List.from(_availablePlayerIndices);
-
-    if (eligiblePlayers.length > 1 && _lastPlayerIndex != null) {
-      eligiblePlayers.remove(_lastPlayerIndex);
-    }
-
-    // إذا لم يبق لاعبين مؤهلين، استخدم جميع المتاحين
-    if (eligiblePlayers.isEmpty) {
-      eligiblePlayers = List.from(_availablePlayerIndices);
-    }
-
-    // اختيار عشوائي
-    final randomIndex = _random.nextInt(eligiblePlayers.length);
-    final selectedPlayer = eligiblePlayers[randomIndex];
-
-    _lastPlayerIndex = _currentPlayerIndex;
-    _currentPlayerIndex = selectedPlayer;
-    _availablePlayerIndices.remove(selectedPlayer);
-
-    // تحديث Firebase مع الدور الجديد (فقط للمضيف)
-    _updateCurrentPlayerInFirebase();
-  }
-
-  // تحديث الدور في Firebase (فقط للمضيف)
-  Future<void> _updateCurrentPlayerInFirebase() async {
-    try {
-      // فقط المضيف يمكنه تحديث الأدوار
-      if (_isCurrentPlayerHost()) {
-        await _firebaseService.updateCurrentPlayer(
-          widget.roomCode,
-          _currentPlayerIndex,
-        );
-      }
-    } catch (e) {
-      print('خطأ في تحديث الدور: $e');
-    }
-  }
-
-  // التحقق من كون اللاعب الحالي هو المضيف
-  bool _isCurrentPlayerHost() {
-    if (_currentRoom == null) return false;
-    return _currentRoom!.players.any(
-      (player) => player.name == widget.playerName && player.isHost,
-    );
   }
 
   // تحديد الإجابة بدون إرسالها فوراً
@@ -303,13 +196,15 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
       final currentQuestion = _questions[_currentQuestionIndex];
       final isCorrect =
           _selectedAnswerIndex == currentQuestion.correctAnswerIndex;
-      final currentPlayer = _currentRoom!.players[_currentPlayerIndex];
 
       print('✅ تم إرسال الإجابة - النتيجة: ${isCorrect ? "صحيحة" : "خاطئة"}');
 
       if (isCorrect) {
         // إجابة صحيحة - معالجة النقاط في Firebase
         print('🎯 إجابة صحيحة - تحديث النقاط...');
+
+        // تشغيل صوت الإجابة الصحيحة
+        await _audioService.playSound('correct_answer.mp3');
 
         final processSuccess = await _firebaseService.processAnswer(
           widget.roomCode,
@@ -320,10 +215,26 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
           // عرض الإجابة الصحيحة للجميع لمدة 3 ثوانٍ
           await _showCorrectAnswerToAll(currentQuestion.correctAnswerIndex);
 
-          _showResultDialog(true, () {
-            // انتقال للسؤال التالي أو اللاعب التالي
-            _handleNextTurn();
-          });
+          // إشعار بالإجابة الصحيحة
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    Icon(Icons.check_circle, color: Colors.white),
+                    SizedBox(width: 8),
+                    Text(
+                      'إجابة صحيحة! +1 نقطة',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                backgroundColor: Colors.green,
+                duration: Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
         } else {
           throw Exception('فشل في معالجة الإجابة الصحيحة');
         }
@@ -331,19 +242,53 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
         // إجابة خاطئة - عرض الإجابة الصحيحة ثم انتقال للتحدي
         print('❌ إجابة خاطئة - عرض الإجابة الصحيحة...');
 
+        // تشغيل صوت الإجابة الخاطئة
+        await _audioService.playSound('wrong_answer.mp3');
+
         // عرض الإجابة الصحيحة أولاً
         await _showCorrectAnswerToAll(currentQuestion.correctAnswerIndex);
 
         // معالجة الإجابة الخاطئة في Firebase
-        await _firebaseService.processAnswer(widget.roomCode, false);
-
-        // تعيين حالة التحدي
-        await _firebaseService.setChallenge(
+        final processSuccess = await _firebaseService.processAnswer(
           widget.roomCode,
-          'challenge_required',
+          false,
         );
 
-        _showChallengeDialog();
+        if (processSuccess) {
+          // تعيين حالة التحدي
+          await _firebaseService.setChallenge(
+            widget.roomCode,
+            'challenge_required',
+          );
+
+          // عرض التحدي للاعب الحالي
+          if (mounted) {
+            _showChallenge();
+          }
+
+          // إشعار بالإجابة الخاطئة
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    Icon(Icons.error, color: Colors.white),
+                    SizedBox(width: 8),
+                    Text(
+                      'إجابة خاطئة! يجب تنفيذ تحدي',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                backgroundColor: Colors.red,
+                duration: Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        } else {
+          throw Exception('فشل في معالجة الإجابة الخاطئة');
+        }
       }
     } catch (e) {
       print('❌ خطأ في معالجة الإجابة: $e');
@@ -357,63 +302,6 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
         setState(() => _isAnswering = false);
       }
     }
-  }
-
-  void _showResultDialog(bool isCorrect, VoidCallback onNext) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder:
-          (context) => AlertDialog(
-            backgroundColor:
-                isCorrect ? Colors.green.shade50 : Colors.red.shade50,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(15),
-            ),
-            title: Row(
-              children: [
-                Icon(
-                  isCorrect ? Icons.check_circle : Icons.cancel,
-                  color: isCorrect ? Colors.green : Colors.red,
-                  size: 30,
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  isCorrect ? 'إجابة صحيحة!' : 'إجابة خاطئة!',
-                  style: TextStyle(
-                    color: isCorrect ? Colors.green : Colors.red,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            content: Text(
-              isCorrect
-                  ? 'أحسنت! لقد حصلت على نقطة'
-                  : 'للأسف، الإجابة غير صحيحة',
-              style: TextStyle(
-                fontSize: 16,
-                color: isCorrect ? Colors.green.shade700 : Colors.red.shade700,
-              ),
-            ),
-            actions: [
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  onNext();
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: isCorrect ? Colors.green : Colors.red,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                child: const Text('متابعة'),
-              ),
-            ],
-          ),
-    );
   }
 
   // عرض حوار التحدي
@@ -488,13 +376,13 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
     try {
       print('✅ إكمال التحدي...');
 
-      // إزالة حالة التحدي من Firebase
-      await _firebaseService.completeChallenge(widget.roomCode);
+      // إزالة حالة التحدي والانتقال للاعب التالي
+      await _firebaseService.completeChallengeAndSwitchTurn(widget.roomCode);
 
       // العودة لشاشة الأسئلة
       if (mounted) {
         Navigator.pop(context);
-        _handleNextTurn();
+        // لا نحتاج لاستدعاء _handleNextTurn لأن Firebase سيتولى تحديث الدور
       }
     } catch (e) {
       print('❌ خطأ في إكمال التحدي: $e');
@@ -509,50 +397,855 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
     }
   }
 
-  // معالجة الانتقال للدور التالي
-  void _handleNextTurn() {
-    if (!_isCurrentPlayerHost()) {
-      // إذا لم يكن المضيف، فقط انتظر التحديثات من Firebase
-      print('⏳ انتظار تحديث الدور من المضيف...');
-      return;
-    }
-
-    // فقط المضيف يمكنه تغيير الأدوار والأسئلة
-    print('👑 المضيف يقوم بتحديث الدور...');
+  // معالجة انتهاء اللعبة
+  void _handleGameFinished(GameRoom room) {
+    if (_isGameFinished) return; // تجنب الاستدعاء المتكرر
 
     setState(() {
-      _selectedAnswerIndex = null;
-
-      // تحقق من انتهاء السؤال الحالي
-      if (_currentQuestionIndex + 1 >= _questions.length) {
-        _isGameFinished = true;
-        _navigateToResults();
-        return;
-      }
-
-      // الانتقال للسؤال التالي
-      _currentQuestionIndex++;
-      _selectRandomPlayer();
+      _isGameFinished = true;
     });
+
+    // انتهاء عادي - الذهاب لشاشة النتائج
+    _navigateToResults();
   }
 
-  void _nextQuestion() {
-    // فقط المضيف يمكنه تغيير الأسئلة
-    if (!_isCurrentPlayerHost()) return;
+  Widget _buildPlayerCard(OnlinePlayer player, bool isCurrentPlayer) {
+    final bool isOnline = player.isOnline;
 
-    setState(() {
-      _selectedAnswerIndex = null;
-      _currentQuestionIndex++;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 1),
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors:
+              isCurrentPlayer
+                  ? [Colors.green.shade400, Colors.green.shade600]
+                  : isOnline
+                  ? [Colors.deepPurple.shade300, Colors.deepPurple.shade500]
+                  : [Colors.grey.shade400, Colors.grey.shade600],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color:
+              isCurrentPlayer
+                  ? Colors.green.shade300
+                  : isOnline
+                  ? Colors.deepPurple.shade300
+                  : Colors.grey.shade300,
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: (isCurrentPlayer
+                    ? Colors.green
+                    : isOnline
+                    ? Colors.deepPurple
+                    : Colors.grey)
+                .withValues(alpha: 0.3),
+            spreadRadius: 1,
+            blurRadius: 3,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Stack(
+            children: [
+              Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.9),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  isCurrentPlayer ? Icons.play_arrow : Icons.person,
+                  color:
+                      isCurrentPlayer
+                          ? Colors.green.shade700
+                          : isOnline
+                          ? Colors.deepPurple.shade700
+                          : Colors.grey.shade700,
+                  size: 14,
+                ),
+              ),
+              // مؤشر حالة الاتصال
+              if (!isOnline)
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.white, width: 1),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          Flexible(
+            child: Text(
+              player.name,
+              style: TextStyle(
+                color:
+                    isOnline
+                        ? Colors.white
+                        : Colors.white.withValues(alpha: 0.7),
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '${player.score}',
+            style: TextStyle(
+              color:
+                  isOnline ? Colors.white : Colors.white.withValues(alpha: 0.7),
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          Text(
+            'نقطة',
+            style: TextStyle(
+              color:
+                  isOnline
+                      ? Colors.white.withValues(alpha: 0.9)
+                      : Colors.white.withValues(alpha: 0.6),
+              fontSize: 7,
+            ),
+          ),
+          // مؤشر حالة الاتصال النصي
+          if (!isOnline)
+            Text(
+              'غير متصل',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.8),
+                fontSize: 6,
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+            ),
+        ],
+      ),
+    );
+  }
 
-      if (_currentQuestionIndex >= _questions.length) {
-        _isGameFinished = true;
-        _navigateToResults();
-        return;
-      }
+  Color _getButtonColor(int index) {
+    if (_selectedAnswerIndex == index) {
+      return Colors.deepPurple.shade600;
+    }
+    return Colors.white;
+  }
 
-      _lastPlayerIndex = _currentPlayerIndex;
-      _selectRandomPlayer();
-    });
+  Color _getTextColor(int index) {
+    if (_selectedAnswerIndex == index) {
+      return Colors.white;
+    }
+    return Colors.deepPurple.shade700;
+  }
+
+  Color _getBorderColor(int index) {
+    if (_selectedAnswerIndex == index) {
+      return Colors.deepPurple.shade600;
+    }
+    return Colors.deepPurple.shade300;
+  }
+
+  // بناء بطاقة السؤال
+  Widget _buildQuestionCard(Question question) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.2),
+            spreadRadius: 3,
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // عنوان السؤال
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.deepPurple.shade50, Colors.deepPurple.shade100],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.deepPurple.shade200),
+            ),
+            child: Text(
+              question.questionText,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.deepPurple.shade800,
+                height: 1.4,
+              ),
+            ),
+          ),
+
+          // عرض الاختيارات - فقط للاعب النشط أو عند عرض الإجابة الصحيحة
+          if (_isCurrentPlayerTurn() || _showingCorrectAnswer) ...[
+            // عنوان القسم
+            if (!_showingCorrectAnswer)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.deepPurple.shade50,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.deepPurple.shade200),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.touch_app,
+                      color: Colors.deepPurple.shade600,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'اختر إجابتك:',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.deepPurple.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (_showingCorrectAnswer)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.green.shade200),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.check_circle,
+                      color: Colors.green.shade600,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'الإجابة الصحيحة:',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 16),
+
+            // خيارات الإجابة
+            ...question.options.asMap().entries.map((entry) {
+              final index = entry.key;
+              final option = entry.value;
+              final isSelected = _selectedAnswerIndex == index;
+              final isCorrectAnswer =
+                  _showingCorrectAnswer && _correctAnswerIndex == index;
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                child: Material(
+                  elevation: isSelected || isCorrectAnswer ? 6 : 2,
+                  borderRadius: BorderRadius.circular(12),
+                  shadowColor:
+                      isCorrectAnswer
+                          ? Colors.green.withOpacity(0.4)
+                          : isSelected
+                          ? Colors.deepPurple.withOpacity(0.4)
+                          : Colors.grey.withOpacity(0.2),
+                  child: InkWell(
+                    onTap:
+                        !_isAnswering &&
+                                _isCurrentPlayerTurn() &&
+                                !_showingCorrectAnswer
+                            ? () => _selectAnswer(index)
+                            : null,
+                    borderRadius: BorderRadius.circular(12),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color:
+                            isCorrectAnswer
+                                ? Colors.green.shade500
+                                : isSelected
+                                ? Colors.deepPurple.shade600
+                                : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color:
+                              isCorrectAnswer
+                                  ? Colors.green.shade300
+                                  : isSelected
+                                  ? Colors.deepPurple.shade600
+                                  : Colors.deepPurple.shade300,
+                          width: 2,
+                        ),
+                        gradient:
+                            isCorrectAnswer
+                                ? LinearGradient(
+                                  colors: [
+                                    Colors.green.shade400,
+                                    Colors.green.shade600,
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                )
+                                : isSelected
+                                ? LinearGradient(
+                                  colors: [
+                                    Colors.deepPurple.shade500,
+                                    Colors.deepPurple.shade700,
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                )
+                                : null,
+                      ),
+                      child: Row(
+                        children: [
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color:
+                                  isCorrectAnswer || isSelected
+                                      ? Colors.white
+                                      : Colors.deepPurple.shade600,
+                              borderRadius: BorderRadius.circular(18),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: (isCorrectAnswer || isSelected
+                                          ? Colors.white
+                                          : Colors.deepPurple)
+                                      .withOpacity(0.3),
+                                  spreadRadius: 1,
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Center(
+                              child: Text(
+                                String.fromCharCode(65 + index), // A, B, C, D
+                                style: TextStyle(
+                                  color:
+                                      isCorrectAnswer || isSelected
+                                          ? (isCorrectAnswer
+                                              ? Colors.green.shade700
+                                              : Colors.deepPurple.shade700)
+                                          : Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Text(
+                              option,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color:
+                                    isCorrectAnswer || isSelected
+                                        ? Colors.white
+                                        : Colors.deepPurple.shade700,
+                              ),
+                            ),
+                          ),
+                          if (isCorrectAnswer) ...[
+                            const SizedBox(width: 12),
+                            Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Icon(
+                                Icons.check_circle,
+                                color: Colors.green.shade600,
+                                size: 18,
+                              ),
+                            ),
+                          ] else if (isSelected) ...[
+                            const SizedBox(width: 12),
+                            Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Icon(
+                                Icons.check,
+                                color: Colors.deepPurple.shade600,
+                                size: 18,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ] else ...[
+            // رسالة للاعبين الآخرين
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: Colors.orange.shade200, width: 2),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.orange.withOpacity(0.1),
+                    spreadRadius: 3,
+                    blurRadius: 10,
+                    offset: const Offset(0, 5),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.hourglass_empty,
+                    size: 48,
+                    color: Colors.orange.shade600,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'انتظار ${_getCurrentPlayerName()}',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange.shade700,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'يقوم بالإجابة على السؤال...',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.orange.shade600,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade100,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.orange.shade300),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.orange.shade600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'في الانتظار...',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isGameFinished) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    // Check if room data is loaded
+    if (_currentRoom == null) {
+      return Scaffold(
+        backgroundColor: Colors.deepPurple.shade50,
+        appBar: AppBar(
+          title: Text(
+            'غرفة ${widget.roomCode}',
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          backgroundColor: Colors.deepPurple,
+          centerTitle: true,
+          elevation: 0,
+          automaticallyImplyLeading: false,
+          actions: [
+            IconButton(
+              onPressed: _leaveRoom,
+              icon: const Icon(Icons.exit_to_app, color: Colors.white),
+              tooltip: 'مغادرة الغرفة',
+            ),
+          ],
+        ),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(color: Colors.deepPurple),
+              SizedBox(height: 16),
+              Text(
+                'جاري تحميل بيانات الغرفة...',
+                style: TextStyle(fontSize: 16, color: Colors.deepPurple),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final currentQuestion =
+        _currentQuestionIndex < _questions.length
+            ? _questions[_currentQuestionIndex]
+            : null;
+
+    if (currentQuestion == null) {
+      return const Scaffold(body: Center(child: Text('جاري تحميل الأسئلة...')));
+    }
+
+    return Scaffold(
+      backgroundColor: Colors.deepPurple.shade50,
+      appBar: AppBar(
+        title: Text(
+          'السؤال ${_currentQuestionIndex + 1} من ${_questions.length}',
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        backgroundColor: Colors.deepPurple,
+        elevation: 0,
+        automaticallyImplyLeading: false,
+        actions: [
+          IconButton(
+            onPressed: _leaveRoom,
+            icon: const Icon(Icons.exit_to_app, color: Colors.white),
+            tooltip: 'مغادرة الغرفة',
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(10),
+        physics: const BouncingScrollPhysics(),
+        children: [
+          // Current player indicator
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(15),
+            margin: const EdgeInsets.only(bottom: 10),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.deepPurple.shade600,
+                  Colors.deepPurple.shade800,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.deepPurple.withOpacity(0.3),
+                  spreadRadius: 2,
+                  blurRadius: 8,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.person,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Column(
+                  children: [
+                    Text(
+                      _isCurrentPlayerTurn() ? 'دورك' : 'دور اللاعب',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontSize: _isCurrentPlayerTurn() ? 24 : 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    if (!_isCurrentPlayerTurn()) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _getCurrentPlayerName(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // Players scores
+          Container(
+            height: 100,
+            margin: const EdgeInsets.only(bottom: 20),
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              itemCount: _currentRoom?.players.length ?? 0,
+              itemBuilder: (context, index) {
+                final player = _currentRoom!.players[index];
+                final isCurrentPlayer = index == _currentPlayerIndex;
+
+                return Container(
+                  width: 140,
+                  margin: const EdgeInsets.only(left: 8),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors:
+                          isCurrentPlayer
+                              ? [Colors.green.shade400, Colors.green.shade600]
+                              : [
+                                Colors.deepPurple.shade500,
+                                Colors.purple.shade500,
+                              ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (isCurrentPlayer ? Colors.green : Colors.purple)
+                            .withOpacity(0.3),
+                        spreadRadius: 1,
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Player avatar
+                      Container(
+                        width: 25,
+                        height: 25,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.9),
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                        child: Icon(
+                          isCurrentPlayer ? Icons.star : Icons.person,
+                          color:
+                              isCurrentPlayer
+                                  ? Colors.amber
+                                  : Colors.grey.shade700,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      // Player name
+                      Flexible(
+                        child: Text(
+                          player.name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      // Player score
+                      Text(
+                        '${player.score}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const Text(
+                        'نقطة',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // Question Card
+          Container(
+            margin: const EdgeInsets.only(bottom: 20),
+            child: _buildQuestionCard(currentQuestion),
+          ),
+
+          // Submit button
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed:
+                  _selectedAnswerIndex != null &&
+                          _isCurrentPlayerTurn() &&
+                          !_isAnswering
+                      ? _confirmAnswer
+                      : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor:
+                    _selectedAnswerIndex != null &&
+                            _isCurrentPlayerTurn() &&
+                            !_isAnswering
+                        ? Colors.deepPurple
+                        : Colors.grey.shade400,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation:
+                    _selectedAnswerIndex != null &&
+                            _isCurrentPlayerTurn() &&
+                            !_isAnswering
+                        ? 8
+                        : 2,
+                shadowColor: Colors.deepPurple.withOpacity(0.3),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    _selectedAnswerIndex != null &&
+                            _isCurrentPlayerTurn() &&
+                            !_isAnswering
+                        ? Icons.check_circle
+                        : Icons.radio_button_unchecked,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _isAnswering
+                        ? 'جاري الإرسال...'
+                        : _selectedAnswerIndex != null && _isCurrentPlayerTurn()
+                        ? 'تأكيد الإجابة'
+                        : _isCurrentPlayerTurn()
+                        ? 'اختر إجابة أولاً'
+                        : 'انتظار دورك',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // إضافة مساحة إضافية في النهاية
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
   }
 
   // مغادرة الغرفة
@@ -627,7 +1320,52 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
     }
   }
 
+  // الحصول على اسم اللاعب الحالي
+  String _getCurrentPlayerName() {
+    if (_currentRoom == null ||
+        _currentPlayerIndex < 0 ||
+        _currentPlayerIndex >= _currentRoom!.players.length) {
+      return '';
+    }
+    return _currentRoom!.players[_currentPlayerIndex].name;
+  }
+
+  bool _isCurrentPlayerTurn() {
+    return _getCurrentPlayerName() == widget.playerName;
+  }
+
+  // التحقق من كون اللاعب الحالي هو المضيف
+  bool _isCurrentPlayerHost() {
+    if (_currentRoom == null) return false;
+    return _currentRoom!.players.any(
+      (player) => player.name == widget.playerName && player.isHost,
+    );
+  }
+
+  // عرض الإجابة الصحيحة للجميع لمدة 3 ثوانٍ
+  Future<void> _showCorrectAnswerToAll(int correctIndex) async {
+    if (!mounted) return;
+
+    setState(() {
+      _showingCorrectAnswer = true;
+      _correctAnswerIndex = correctIndex;
+    });
+
+    // عرض الإجابة الصحيحة لمدة 3 ثوانٍ
+    await Future.delayed(const Duration(seconds: 3));
+
+    if (mounted) {
+      setState(() {
+        _showingCorrectAnswer = false;
+        _correctAnswerIndex = null;
+      });
+    }
+  }
+
   void _navigateToResults() {
+    // تشغيل موسيقى النتائج
+    _audioService.playMusic('results_music.mp3');
+
     final sortedPlayersData =
         _currentRoom!.players
             .map(
@@ -658,1313 +1396,266 @@ class _OnlineQuestionScreenState extends State<OnlineQuestionScreen> {
     );
   }
 
-  // الحصول على اسم اللاعب الحالي
-  String _getCurrentPlayerName() {
-    if (_currentRoom == null ||
-        _currentPlayerIndex < 0 ||
-        _currentPlayerIndex >= _currentRoom!.players.length) {
-      return '';
-    }
-    return _currentRoom!.players[_currentPlayerIndex].name;
+  // تهيئة المؤثرات الصوتية
+  Future<void> _initializeAudio() async {
+    await _audioService.initialize();
+    // إيقاف موسيقى القائمة الرئيسية عند بدء الأسئلة
+    await _audioService.stopMusic();
   }
 
-  bool _isCurrentPlayerTurn() {
-    return _getCurrentPlayerName() == widget.playerName;
-  }
+  // عرض التحدي للاعب
+  void _showChallenge() async {
+    if (!mounted) return;
 
-  // دالة طرد اللاعب (للمضيف فقط)
-  Future<void> _showKickPlayerDialog(OnlinePlayer player) async {
     try {
-      // تأكيد الطرد
-      final shouldKick = await showDialog<bool>(
+      // تحميل التحدي من ملف JSON
+      final String response = await rootBundle.loadString(
+        'assets/data/challenges.json',
+      );
+      final List<dynamic> data = json.decode(response);
+      final List<String> challenges = List<String>.from(data);
+
+      final random = Random();
+      final selectedChallenge = challenges[random.nextInt(challenges.length)];
+
+      setState(() {
+        _isChallengeActive = true;
+        _currentChallenge = selectedChallenge;
+      });
+
+      // عرض حوار التحدي
+      showDialog(
         context: context,
-        builder:
-            (context) => AlertDialog(
-              title: Row(
+        barrierDismissible: false,
+        builder: (context) => _buildChallengeDialog(),
+      );
+    } catch (e) {
+      print('Error loading challenge: $e');
+      // تحدي افتراضي في حالة الخطأ
+      setState(() {
+        _isChallengeActive = true;
+        _currentChallenge = 'قم بالرقص لمدة 30 ثانية!';
+      });
+
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => _buildChallengeDialog(),
+      );
+    }
+  }
+
+  // بناء حوار التحدي
+  Widget _buildChallengeDialog() {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.red.shade50,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Wrong answer notification
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.red.shade100,
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: Colors.red, width: 2),
+              ),
+              child: Column(
                 children: [
-                  Icon(Icons.warning, color: Colors.orange.shade600, size: 28),
-                  const SizedBox(width: 10),
-                  const Text('طرد اللاعب'),
+                  const Icon(Icons.close_rounded, color: Colors.red, size: 50),
+                  const SizedBox(height: 10),
+                  Text(
+                    'أوه لا، ${widget.playerName}!',
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'إجابة خاطئة!',
+                    style: TextStyle(fontSize: 18, color: Colors.red),
+                    textAlign: TextAlign.center,
+                  ),
                 ],
               ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
+            ),
+
+            const SizedBox(height: 20),
+
+            // Challenge container
+            Container(
+              padding: const EdgeInsets.all(25),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.orange.shade300, Colors.orange.shade500],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.orange.withOpacity(0.4),
+                    spreadRadius: 3,
+                    blurRadius: 10,
+                    offset: const Offset(0, 5),
+                  ),
+                ],
+              ),
+              child: Column(
                 children: [
-                  Text(
-                    'هل أنت متأكد من أنك تريد طرد "${player.name}" من اللعبة؟',
-                    style: const TextStyle(fontSize: 16),
+                  const Icon(Icons.emoji_events, color: Colors.white, size: 40),
+                  const SizedBox(height: 15),
+                  const Text(
+                    'تحديك هو:',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                    textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 15),
                   Container(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(15),
                     decoration: BoxDecoration(
-                      color: Colors.red.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.red.shade200),
+                      color: Colors.white.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.info_outline,
-                          color: Colors.red.shade600,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 8),
-                        const Expanded(
-                          child: Text(
-                            'سيتم إخراج اللاعب من اللعبة نهائياً',
-                            style: TextStyle(fontSize: 14),
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      _currentChallenge,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.orange,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
                   ),
                 ],
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('إلغاء'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
+            ),
+
+            const SizedBox(height: 20),
+
+            // Completion button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _completeChallenge();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Text('طرد'),
+                  elevation: 5,
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.check_circle, size: 24),
+                    SizedBox(width: 10),
+                    Text(
+                      'تم إنجاز التحدي!',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 15),
+
+            // Fun message
+            Container(
+              padding: const EdgeInsets.all(15),
+              decoration: BoxDecoration(
+                color: Colors.yellow.shade100,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.yellow.shade300, width: 1),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.lightbulb, color: Colors.orange, size: 24),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'لا تقلق! التحديات تجعل اللعبة أكثر متعة! 🎉',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.orange,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // إكمال التحدي
+  void _completeChallenge() async {
+    try {
+      print('✅ إكمال التحدي...');
+
+      // إزالة حالة التحدي والانتقال للاعب التالي
+      await _firebaseService.completeChallengeAndSwitchTurn(widget.roomCode);
+
+      setState(() {
+        _isChallengeActive = false;
+        _currentChallenge = '';
+      });
+
+      // إشعار بإكمال التحدي
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 8),
+                Text(
+                  'تم إكمال التحدي! انتظار اللاعب التالي...',
+                  style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ],
             ),
-      );
-
-      if (shouldKick == true) {
-        // عرض مؤشر التحميل
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder:
-              (context) => const Center(child: CircularProgressIndicator()),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
-
-        // تنفيذ الطرد
-        final success = await _firebaseService.kickPlayer(
-          widget.roomCode,
-          player.id,
-        );
-
-        if (mounted) {
-          Navigator.of(context).pop(); // إغلاق مؤشر التحميل
-
-          if (success) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('تم طرد "${player.name}" من اللعبة'),
-                backgroundColor: Colors.orange,
-                duration: const Duration(seconds: 3),
-              ),
-            );
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('فشل في طرد اللاعب'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-        }
       }
     } catch (e) {
+      print('❌ خطأ في إكمال التحدي: $e');
       if (mounted) {
-        // التأكد من إغلاق أي حوار مفتوح
-        if (Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('خطأ في طرد اللاعب: $e'),
+            content: Text('خطأ في إكمال التحدي: $e'),
             backgroundColor: Colors.red,
           ),
         );
-      }
-    }
-  }
-
-  // دالة لبناء عنصر إرشادات
-  Widget _buildInstructionItem(IconData icon, String text) {
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: Colors.blue.shade50,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(icon, color: Colors.blue.shade600, size: 20),
-        ),
-        const SizedBox(width: 12),
-        Expanded(child: Text(text, style: const TextStyle(fontSize: 14))),
-      ],
-    );
-  }
-
-  Widget _buildPlayerCard(OnlinePlayer player, bool isCurrentPlayer) {
-    final bool isOnline = player.isOnline;
-    final bool canKick =
-        _isCurrentPlayerHost() &&
-        !player.isHost &&
-        player.name != widget.playerName;
-
-    return GestureDetector(
-      onLongPress: canKick ? () => _showKickPlayerDialog(player) : null,
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 1),
-        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors:
-                isCurrentPlayer
-                    ? [Colors.green.shade400, Colors.green.shade600]
-                    : isOnline
-                    ? [Colors.deepPurple.shade300, Colors.deepPurple.shade500]
-                    : [Colors.grey.shade400, Colors.grey.shade600],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color:
-                isCurrentPlayer
-                    ? Colors.green.shade300
-                    : isOnline
-                    ? Colors.deepPurple.shade300
-                    : Colors.grey.shade300,
-            width: 1.5,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: (isCurrentPlayer
-                      ? Colors.green
-                      : isOnline
-                      ? Colors.deepPurple
-                      : Colors.grey)
-                  .withValues(alpha: 0.3),
-              spreadRadius: 1,
-              blurRadius: 3,
-              offset: const Offset(0, 1),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Stack(
-              children: [
-                Container(
-                  width: 20,
-                  height: 20,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.9),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    isCurrentPlayer ? Icons.play_arrow : Icons.person,
-                    color:
-                        isCurrentPlayer
-                            ? Colors.green.shade700
-                            : isOnline
-                            ? Colors.deepPurple.shade700
-                            : Colors.grey.shade700,
-                    size: 14,
-                  ),
-                ),
-                // مؤشر حالة الاتصال
-                if (!isOnline)
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    child: Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.white, width: 1),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 3),
-            Flexible(
-              child: Text(
-                player.name,
-                style: TextStyle(
-                  color:
-                      isOnline
-                          ? Colors.white
-                          : Colors.white.withValues(alpha: 0.7),
-                  fontSize: 9,
-                  fontWeight: FontWeight.bold,
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              '${player.score}',
-              style: TextStyle(
-                color:
-                    isOnline
-                        ? Colors.white
-                        : Colors.white.withValues(alpha: 0.7),
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            Text(
-              'نقطة',
-              style: TextStyle(
-                color:
-                    isOnline
-                        ? Colors.white.withValues(alpha: 0.9)
-                        : Colors.white.withValues(alpha: 0.6),
-                fontSize: 7,
-              ),
-            ),
-            // مؤشر حالة الاتصال النصي
-            if (!isOnline)
-              Text(
-                'غير متصل',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.8),
-                  fontSize: 6,
-                  fontWeight: FontWeight.w500,
-                ),
-                textAlign: TextAlign.center,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Color _getButtonColor(int index) {
-    if (_selectedAnswerIndex == index) {
-      return Colors.deepPurple.shade600;
-    }
-    return Colors.white;
-  }
-
-  Color _getTextColor(int index) {
-    if (_selectedAnswerIndex == index) {
-      return Colors.white;
-    }
-    return Colors.deepPurple.shade700;
-  }
-
-  Color _getBorderColor(int index) {
-    if (_selectedAnswerIndex == index) {
-      return Colors.deepPurple.shade600;
-    }
-    return Colors.deepPurple.shade300;
-  }
-
-  // معالجة انتهاء اللعبة
-  void _handleGameFinished(GameRoom room) {
-    if (_isGameFinished) return; // تجنب الاستدعاء المتكرر
-
-    setState(() {
-      _isGameFinished = true;
-    });
-
-    // إذا انتهت اللعبة بسبب بقاء لاعب واحد فقط
-    if (room.players.length == 1) {
-      final winner = room.players.first;
-      _showSinglePlayerWinDialog(winner);
-    } else {
-      // انتهاء عادي - الذهاب لشاشة النتائج
-      _navigateToResults();
-    }
-  }
-
-  // عرض حوار الفوز للاعب الوحيد المتبقي
-  void _showSinglePlayerWinDialog(OnlinePlayer winner) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder:
-          (context) => AlertDialog(
-            title: Row(
-              children: [
-                Icon(
-                  Icons.emoji_events,
-                  color: Colors.amber.shade600,
-                  size: 30,
-                ),
-                const SizedBox(width: 10),
-                const Text(
-                  'تهانينا! 🎉',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.deepPurple,
-                  ),
-                ),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Colors.amber.shade100, Colors.amber.shade200],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(15),
-                    border: Border.all(color: Colors.amber.shade300),
-                  ),
-                  child: Column(
-                    children: [
-                      Icon(Icons.star, color: Colors.amber.shade600, size: 60),
-                      const SizedBox(height: 10),
-                      Text(
-                        winner.name,
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.deepPurple,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'أنت الفائز!',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.deepPurple,
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Text(
-                        'النقاط: ${winner.score}',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.grey.shade700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 15),
-                Text(
-                  'غادر جميع اللاعبين الآخرين من الغرفة',
-                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-            actions: [
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  // العودة إلى الصفحة الرئيسية (صفحة اختيار نوع اللعب)
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (context) => const HomeScreen()),
-                    (route) => false,
-                  );
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.deepPurple,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.home),
-                    SizedBox(width: 8),
-                    Text(
-                      'العودة للقائمة الرئيسية',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-    );
-  }
-
-  Widget _buildActionButton() {
-    // التحقق من وجود تحدي نشط
-    if (_currentRoom?.currentChallenge != null) {
-      final currentPlayerName = _getCurrentPlayerName();
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.orange.shade50,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.orange.shade200),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.sports_gymnastics, color: Colors.orange, size: 24),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                _isCurrentPlayerTurn()
-                    ? 'عليك تنفيذ التحدي للمتابعة'
-                    : '$currentPlayerName ينفذ التحدي...',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.orange.shade700,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // إذا كان يجيب
-    if (_isAnswering) {
-      return ElevatedButton(
-        onPressed: null,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.grey.shade400,
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-              ),
-            ),
-            const SizedBox(width: 12),
-            const Text(
-              'جاري المعالجة...',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // الزر العادي
-    return ElevatedButton(
-      onPressed:
-          (_selectedAnswerIndex != null && _isCurrentPlayerTurn())
-              ? _confirmAnswer
-              : null,
-      style: ElevatedButton.styleFrom(
-        backgroundColor:
-            (_selectedAnswerIndex != null && _isCurrentPlayerTurn())
-                ? Colors.deepPurple
-                : Colors.grey.shade400,
-        foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        elevation:
-            (_selectedAnswerIndex != null && _isCurrentPlayerTurn()) ? 8 : 2,
-        shadowColor: Colors.deepPurple.withValues(alpha: 0.3),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            _selectedAnswerIndex != null ? Icons.send : Icons.touch_app,
-            size: 20,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            _selectedAnswerIndex != null
-                ? 'تأكيد الإجابة'
-                : _isCurrentPlayerTurn()
-                ? 'اختر إجابة أولاً'
-                : 'انتظار دورك',
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_isGameFinished) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-
-    // Check if room data is loaded
-    if (_currentRoom == null) {
-      return Scaffold(
-        backgroundColor: Colors.deepPurple.shade50,
-        appBar: AppBar(
-          title: Text(
-            'غرفة ${widget.roomCode}',
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-          backgroundColor: Colors.deepPurple,
-          centerTitle: true,
-          elevation: 0,
-          automaticallyImplyLeading: false,
-          actions: [
-            IconButton(
-              onPressed: _leaveRoom,
-              icon: const Icon(Icons.exit_to_app, color: Colors.white),
-              tooltip: 'مغادرة الغرفة',
-            ),
-          ],
-        ),
-        body: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(color: Colors.deepPurple),
-              SizedBox(height: 16),
-              Text(
-                'جاري تحميل بيانات الغرفة...',
-                style: TextStyle(fontSize: 16, color: Colors.deepPurple),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    final currentQuestion =
-        _currentQuestionIndex < _questions.length
-            ? _questions[_currentQuestionIndex]
-            : null;
-
-    if (currentQuestion == null) {
-      return const Scaffold(body: Center(child: Text('جاري تحميل الأسئلة...')));
-    }
-
-    return Scaffold(
-      backgroundColor: Colors.deepPurple.shade50,
-      appBar: AppBar(
-        title: Text(
-          'غرفة ${widget.roomCode}',
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
-        backgroundColor: Colors.deepPurple,
-        centerTitle: true,
-        elevation: 0,
-        automaticallyImplyLeading: false,
-        actions: [
-          // أيقونة الإرشادات للمشرف
-          if (_isCurrentPlayerHost())
-            IconButton(
-              onPressed: () {
-                showDialog(
-                  context: context,
-                  builder:
-                      (context) => AlertDialog(
-                        title: Row(
-                          children: [
-                            Icon(
-                              Icons.info_outline,
-                              color: Colors.blue.shade600,
-                              size: 28,
-                            ),
-                            const SizedBox(width: 10),
-                            const Text('إرشادات المشرف'),
-                          ],
-                        ),
-                        content: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'كمشرف للغرفة، يمكنك:',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 15),
-                            _buildInstructionItem(
-                              Icons.touch_app,
-                              'اضغط مطولاً على أي لاعب لطرده من اللعبة',
-                            ),
-                            const SizedBox(height: 12),
-                            _buildInstructionItem(
-                              Icons.wifi_off,
-                              'اللاعبون غير المتصلين يظهرون باللون الرمادي',
-                            ),
-                            const SizedBox(height: 12),
-                            _buildInstructionItem(
-                              Icons.circle,
-                              'النقطة الحمراء تعني عدم الاتصال',
-                            ),
-                          ],
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            child: const Text('فهمت'),
-                          ),
-                        ],
-                      ),
-                );
-              },
-              icon: const Icon(Icons.help_outline, color: Colors.white),
-              tooltip: 'إرشادات المشرف',
-            ),
-          IconButton(
-            onPressed: _leaveRoom,
-            icon: const Icon(Icons.exit_to_app, color: Colors.white),
-            tooltip: 'مغادرة الغرفة',
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // المحتوى القابل للتمرير
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                physics: const BouncingScrollPhysics(),
-                child: Column(
-                  children: [
-                    // شريط التقدم والمعلومات
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.grey.withValues(alpha: 0.2),
-                            spreadRadius: 2,
-                            blurRadius: 8,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'السؤال ${_currentQuestionIndex + 1}/${_questions.length}',
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.deepPurple,
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color:
-                                      _isCurrentPlayerTurn()
-                                          ? Colors.green.shade100
-                                          : Colors.orange.shade100,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color:
-                                        _isCurrentPlayerTurn()
-                                            ? Colors.green.shade300
-                                            : Colors.orange.shade300,
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      _isCurrentPlayerTurn()
-                                          ? Icons.play_arrow
-                                          : Icons.hourglass_empty,
-                                      color:
-                                          _isCurrentPlayerTurn()
-                                              ? Colors.green.shade700
-                                              : Colors.orange.shade700,
-                                      size: 16,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      _isCurrentPlayerTurn()
-                                          ? 'دورك'
-                                          : 'دور ${_getCurrentPlayerName()}',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                        color:
-                                            _isCurrentPlayerTurn()
-                                                ? Colors.green.shade700
-                                                : Colors.orange.shade700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          LinearProgressIndicator(
-                            value:
-                                (_currentQuestionIndex + 1) / _questions.length,
-                            backgroundColor: Colors.grey.shade300,
-                            valueColor: const AlwaysStoppedAnimation<Color>(
-                              Colors.deepPurple,
-                            ),
-                            minHeight: 6,
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // قائمة اللاعبين الأفقية
-                    Container(
-                      height: 100,
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Row(
-                        children:
-                            _currentRoom!.players.asMap().entries.map((entry) {
-                              final index = entry.key;
-                              final player = entry.value;
-                              final isCurrentPlayer =
-                                  index == _currentPlayerIndex;
-                              return Expanded(
-                                child: Container(
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 2,
-                                  ),
-                                  child: _buildPlayerCard(
-                                    player,
-                                    isCurrentPlayer,
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                      ),
-                    ),
-
-                    // نص إرشادي للمشرف
-                    if (_isCurrentPlayerHost() &&
-                        _currentRoom!.players.any((p) => !p.isOnline))
-                      Container(
-                        width: double.infinity,
-                        margin: const EdgeInsets.only(top: 8),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.orange.shade200),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.info_outline,
-                              color: Colors.orange.shade600,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 8),
-                            const Expanded(
-                              child: Text(
-                                'اضغط مطولاً على أي لاعب غير متصل لطرده',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                    const SizedBox(height: 16),
-
-                    // السؤال
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(20),
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            Colors.deepPurple.shade50,
-                            Colors.deepPurple.shade100,
-                          ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.deepPurple.shade200),
-                      ),
-                      child: Text(
-                        currentQuestion.questionText,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.deepPurple.shade800,
-                          height: 1.4,
-                        ),
-                      ),
-                    ),
-
-                    // خيارات الإجابة - تظهر فقط للاعب النشط أو عند عرض الإجابة الصحيحة
-                    if (_isCurrentPlayerTurn() || _showingCorrectAnswer) ...[
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(15),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.grey.withValues(alpha: 0.2),
-                              spreadRadius: 3,
-                              blurRadius: 10,
-                              offset: const Offset(0, 5),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          children: [
-                            // عنوان القسم
-                            if (!_showingCorrectAnswer)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 8,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.deepPurple.shade50,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: Colors.deepPurple.shade200,
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.touch_app,
-                                      color: Colors.deepPurple.shade600,
-                                      size: 18,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      'اختر إجابتك:',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.deepPurple.shade700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            if (_showingCorrectAnswer)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 8,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.green.shade50,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: Colors.green.shade200,
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.check_circle,
-                                      color: Colors.green.shade600,
-                                      size: 18,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      'الإجابة الصحيحة:',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.green.shade700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            const SizedBox(height: 16),
-
-                            // خيارات الإجابة
-                            ...currentQuestion.options.asMap().entries.map((
-                              entry,
-                            ) {
-                              final index = entry.key;
-                              final option = entry.value;
-                              final isSelected = _selectedAnswerIndex == index;
-                              final isCorrectAnswer =
-                                  _showingCorrectAnswer &&
-                                  _correctAnswerIndex == index;
-
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 12),
-                                child: Material(
-                                  elevation:
-                                      isSelected || isCorrectAnswer ? 6 : 2,
-                                  borderRadius: BorderRadius.circular(12),
-                                  shadowColor:
-                                      isCorrectAnswer
-                                          ? Colors.green.withValues(alpha: 0.4)
-                                          : isSelected
-                                          ? Colors.deepPurple.withValues(
-                                            alpha: 0.4,
-                                          )
-                                          : Colors.grey.withValues(alpha: 0.2),
-                                  child: InkWell(
-                                    onTap:
-                                        !_isAnswering &&
-                                                _isCurrentPlayerTurn() &&
-                                                !_showingCorrectAnswer
-                                            ? () => _selectAnswer(index)
-                                            : null,
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 200,
-                                      ),
-                                      width: double.infinity,
-                                      padding: const EdgeInsets.all(16),
-                                      decoration: BoxDecoration(
-                                        color:
-                                            isCorrectAnswer
-                                                ? Colors.green.shade500
-                                                : isSelected
-                                                ? Colors.deepPurple.shade600
-                                                : Colors.white,
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(
-                                          color:
-                                              isCorrectAnswer
-                                                  ? Colors.green.shade300
-                                                  : isSelected
-                                                  ? Colors.deepPurple.shade600
-                                                  : Colors.deepPurple.shade300,
-                                          width: 2,
-                                        ),
-                                        gradient:
-                                            isCorrectAnswer
-                                                ? LinearGradient(
-                                                  colors: [
-                                                    Colors.green.shade400,
-                                                    Colors.green.shade600,
-                                                  ],
-                                                  begin: Alignment.topLeft,
-                                                  end: Alignment.bottomRight,
-                                                )
-                                                : isSelected
-                                                ? LinearGradient(
-                                                  colors: [
-                                                    Colors.deepPurple.shade500,
-                                                    Colors.deepPurple.shade700,
-                                                  ],
-                                                  begin: Alignment.topLeft,
-                                                  end: Alignment.bottomRight,
-                                                )
-                                                : null,
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          AnimatedContainer(
-                                            duration: const Duration(
-                                              milliseconds: 200,
-                                            ),
-                                            width: 36,
-                                            height: 36,
-                                            decoration: BoxDecoration(
-                                              color:
-                                                  isCorrectAnswer || isSelected
-                                                      ? Colors.white
-                                                      : Colors
-                                                          .deepPurple
-                                                          .shade600,
-                                              borderRadius:
-                                                  BorderRadius.circular(18),
-                                              boxShadow: [
-                                                BoxShadow(
-                                                  color: (isCorrectAnswer ||
-                                                              isSelected
-                                                          ? Colors.white
-                                                          : Colors.deepPurple)
-                                                      .withValues(alpha: 0.3),
-                                                  spreadRadius: 1,
-                                                  blurRadius: 4,
-                                                  offset: const Offset(0, 2),
-                                                ),
-                                              ],
-                                            ),
-                                            child: Center(
-                                              child: Text(
-                                                String.fromCharCode(
-                                                  65 + index,
-                                                ), // A, B, C, D
-                                                style: TextStyle(
-                                                  color:
-                                                      isCorrectAnswer ||
-                                                              isSelected
-                                                          ? (isCorrectAnswer
-                                                              ? Colors
-                                                                  .green
-                                                                  .shade700
-                                                              : Colors
-                                                                  .deepPurple
-                                                                  .shade700)
-                                                          : Colors.white,
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 16,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 16),
-                                          Expanded(
-                                            child: Text(
-                                              option,
-                                              style: TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w600,
-                                                color:
-                                                    isCorrectAnswer ||
-                                                            isSelected
-                                                        ? Colors.white
-                                                        : Colors
-                                                            .deepPurple
-                                                            .shade700,
-                                              ),
-                                            ),
-                                          ),
-                                          if (isCorrectAnswer) ...[
-                                            const SizedBox(width: 12),
-                                            Container(
-                                              padding: const EdgeInsets.all(6),
-                                              decoration: BoxDecoration(
-                                                color: Colors.white,
-                                                borderRadius:
-                                                    BorderRadius.circular(12),
-                                              ),
-                                              child: Icon(
-                                                Icons.check_circle,
-                                                color: Colors.green.shade600,
-                                                size: 18,
-                                              ),
-                                            ),
-                                          ] else if (isSelected) ...[
-                                            const SizedBox(width: 12),
-                                            Container(
-                                              padding: const EdgeInsets.all(6),
-                                              decoration: BoxDecoration(
-                                                color: Colors.white,
-                                                borderRadius:
-                                                    BorderRadius.circular(12),
-                                              ),
-                                              child: Icon(
-                                                Icons.check,
-                                                color:
-                                                    Colors.deepPurple.shade600,
-                                                size: 18,
-                                              ),
-                                            ),
-                                          ],
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              );
-                            }),
-                          ],
-                        ),
-                      ),
-                    ] else ...[
-                      // رسالة للاعبين الآخرين
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(24),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
-                          borderRadius: BorderRadius.circular(15),
-                          border: Border.all(
-                            color: Colors.orange.shade200,
-                            width: 2,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.orange.withValues(alpha: 0.1),
-                              spreadRadius: 3,
-                              blurRadius: 10,
-                              offset: const Offset(0, 5),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          children: [
-                            Icon(
-                              Icons.hourglass_empty,
-                              size: 48,
-                              color: Colors.orange.shade600,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'انتظار ${_getCurrentPlayerName()}',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.orange.shade700,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'يقوم بالإجابة على السؤال...',
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Colors.orange.shade600,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 16),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.orange.shade100,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: Colors.orange.shade300,
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        Colors.orange.shade600,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    'في الانتظار...',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      color: Colors.orange.shade700,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-
-                    const SizedBox(height: 80), // مساحة للزر السفلي
-                  ],
-                ),
-              ),
-            ),
-
-            // زر التأكيد الثابت في الأسفل - يظهر فقط للاعب النشط
-            if (_isCurrentPlayerTurn() && !_showingCorrectAnswer)
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.grey.withValues(alpha: 0.3),
-                      spreadRadius: 1,
-                      blurRadius: 8,
-                      offset: const Offset(0, -2),
-                    ),
-                  ],
-                ),
-                child: SafeArea(
-                  top: false,
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: _buildActionButton(),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // عرض الإجابة الصحيحة للجميع
-  Future<void> _showCorrectAnswerToAll(int correctIndex) async {
-    if (mounted) {
-      setState(() {
-        _showingCorrectAnswer = true;
-        _correctAnswerIndex = correctIndex;
-      });
-
-      // عرض لمدة 3 ثوانٍ
-      await Future.delayed(const Duration(seconds: 3));
-
-      if (mounted) {
-        setState(() {
-          _showingCorrectAnswer = false;
-          _correctAnswerIndex = null;
-        });
       }
     }
   }

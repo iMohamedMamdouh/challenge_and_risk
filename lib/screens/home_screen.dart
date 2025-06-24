@@ -6,6 +6,7 @@ import 'admin_dashboard_screen.dart';
 import 'local_settings_screen.dart';
 import 'login_screen.dart';
 import 'online_home_screen.dart';
+import 'user_dashboard_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -37,6 +38,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (mounted) {
       setState(() {
         // تحديث الواجهة عند تغيير حالة الصوت
+        // هذا سيحدث الأيقونة تلقائياً
       });
     }
   }
@@ -61,11 +63,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _initializeAudio() async {
     await _audioService.initialize();
-    // إزالة التشغيل الإجباري - النظام سيتولى ذلك حسب الإعدادات المحفوظة
+    // تحديث الواجهة بعد تهيئة الصوت لضمان عرض الأيقونة الصحيحة
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void _toggleAudio() {
     _audioService.toggleMusic();
+    // تحديث الواجهة فوراً بعد تغيير حالة الموسيقى
+    setState(() {});
   }
 
   void _goToLogin() {
@@ -82,9 +89,56 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  void _goToUserDashboard() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const UserDashboardScreen()),
+    );
+  }
+
   void _logout() async {
-    await _authService.logout();
-    setState(() {});
+    try {
+      // عرض مؤشر التحميل
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
+
+      // تسجيل الخروج
+      await _authService.logout();
+
+      // إغلاق مؤشر التحميل
+      if (mounted) {
+        Navigator.of(context).pop();
+
+        // تحديث الواجهة
+        setState(() {});
+
+        // إظهار رسالة نجاح
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم تسجيل الخروج بنجاح'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      // إغلاق مؤشر التحميل في حالة الخطأ
+      if (mounted) {
+        Navigator.of(context).pop();
+
+        // إظهار رسالة خطأ
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ في تسجيل الخروج: $e'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -119,41 +173,103 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             else
               PopupMenuButton<String>(
                 icon: const Icon(Icons.person, color: Colors.white),
-                onSelected: (value) {
+                onSelected: (value) async {
                   switch (value) {
                     case 'dashboard':
                       _goToAdminDashboard();
+                      break;
+                    case 'user_dashboard':
+                      _goToUserDashboard();
                       break;
                     case 'logout':
                       _logout();
                       break;
                   }
                 },
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                elevation: 8,
+                color: Colors.white,
                 itemBuilder:
                     (context) => [
                       PopupMenuItem(
                         enabled: false,
-                        child: Text('مرحباً ${user.username}'),
-                      ),
-                      if (user.canManageQuestions())
-                        const PopupMenuItem(
-                          value: 'dashboard',
-                          child: Row(
-                            children: [
-                              Icon(Icons.dashboard, color: Colors.deepPurple),
-                              SizedBox(width: 8),
-                              Text('لوحة الإدارة'),
-                            ],
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Text(
+                            'مرحباً ${user.username}',
+                            style: TextStyle(
+                              color: Colors.deepPurple.shade700,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
                           ),
                         ),
-                      const PopupMenuItem(
+                      ),
+                      const PopupMenuDivider(),
+                      if (user.canManageQuestions())
+                        PopupMenuItem(
+                          value: 'dashboard',
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.dashboard, color: Colors.deepPurple),
+                                SizedBox(width: 12),
+                                Text(
+                                  'لوحة الإدارة',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      if (!user.canManageQuestions())
+                        PopupMenuItem(
+                          value: 'user_dashboard',
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: const Row(
+                              children: [
+                                Icon(
+                                  Icons.person_outline,
+                                  color: Colors.deepPurple,
+                                ),
+                                SizedBox(width: 12),
+                                Text(
+                                  'لوحة المستخدم',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      const PopupMenuDivider(),
+                      PopupMenuItem(
                         value: 'logout',
-                        child: Row(
-                          children: [
-                            Icon(Icons.logout, color: Colors.red),
-                            SizedBox(width: 8),
-                            Text('تسجيل الخروج'),
-                          ],
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: const Row(
+                            children: [
+                              Icon(Icons.logout, color: Colors.red),
+                              SizedBox(width: 12),
+                              Text(
+                                'تسجيل الخروج',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.red,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -167,14 +283,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             child: IconButton(
               onPressed: _toggleAudio,
               icon: Icon(
-                _audioService.isMusicEnabled
+                _audioService.isMusicEnabled && _audioService.isMusicPlaying
                     ? Icons.volume_up
                     : Icons.volume_off,
                 color: Colors.white,
                 size: 28,
               ),
               tooltip:
-                  _audioService.isMusicEnabled ? 'إيقاف الصوت' : 'تشغيل الصوت',
+                  _audioService.isMusicEnabled && _audioService.isMusicPlaying
+                      ? 'إيقاف الصوت'
+                      : 'تشغيل الصوت',
             ),
           ),
         ],

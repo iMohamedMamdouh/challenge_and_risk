@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/game_room.dart';
 import '../models/question.dart';
+import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
 import '../widgets/screens/online_home/available_rooms_widget.dart';
 import '../widgets/screens/online_home/room_form_widget.dart';
@@ -20,6 +21,7 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
   final _nameController = TextEditingController();
   final _roomCodeController = TextEditingController();
   final _firebaseService = FirebaseService();
+  final _authService = AuthService();
   bool _isLoading = false;
   bool _isCreatingRoom = true;
   Map<String, dynamic>? _lastRoomData;
@@ -32,6 +34,7 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
     super.initState();
     _performAutoCleanup();
     _checkForLastRoom();
+    _setPlayerNameFromAuth();
   }
 
   @override
@@ -549,6 +552,14 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
     });
   }
 
+  void _setPlayerNameFromAuth() {
+    final currentUser = _authService.currentUser;
+    if (currentUser != null) {
+      _nameController.text = currentUser.username;
+      print('✅ تم تعيين اسم اللاعب تلقائياً: ${currentUser.username}');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -736,6 +747,8 @@ class _OnlineHomeScreenState extends State<OnlineHomeScreen> {
                       },
                       showAvailableRooms: _showAvailableRooms,
                       isLoadingRooms: _isLoadingRooms,
+                      isLoggedIn: _authService.isLoggedIn,
+                      isNameReadOnly: _authService.isLoggedIn,
                     ),
 
                     // عرض الغرف المتاحة

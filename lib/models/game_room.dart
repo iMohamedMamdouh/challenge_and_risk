@@ -20,6 +20,10 @@ class GameRoom {
   final String? endReason;
   final int? timerDuration;
 
+  // نظام تتبع الأدوار
+  final List<int>? availablePlayerIndices;
+  final int? lastPlayerIndex;
+
   GameRoom({
     required this.id,
     required this.hostId,
@@ -34,6 +38,8 @@ class GameRoom {
     this.winner,
     this.endReason,
     this.timerDuration,
+    this.availablePlayerIndices,
+    this.lastPlayerIndex,
   });
 
   factory GameRoom.fromFirestore(DocumentSnapshot doc) {
@@ -59,6 +65,11 @@ class GameRoom {
       currentQuestionIndex: data['currentQuestionIndex'] ?? 0,
       currentPlayerIndex: data['currentPlayerIndex'] ?? 0,
       currentChallenge: data['currentChallenge'],
+      availablePlayerIndices:
+          (data['availablePlayerIndices'] as List<dynamic>?)
+              ?.map((e) => e as int)
+              .toList(),
+      lastPlayerIndex: data['lastPlayerIndex'],
     );
   }
 
@@ -77,6 +88,8 @@ class GameRoom {
       'winner': winner,
       'endReason': endReason,
       'timerDuration': timerDuration,
+      'availablePlayerIndices': availablePlayerIndices,
+      'lastPlayerIndex': lastPlayerIndex,
     };
   }
 
@@ -94,6 +107,8 @@ class GameRoom {
     String? winner,
     String? endReason,
     int? timerDuration,
+    List<int>? availablePlayerIndices,
+    int? lastPlayerIndex,
   }) {
     return GameRoom(
       id: id ?? this.id,
@@ -109,6 +124,9 @@ class GameRoom {
       winner: winner ?? this.winner,
       endReason: endReason ?? this.endReason,
       timerDuration: timerDuration ?? this.timerDuration,
+      availablePlayerIndices:
+          availablePlayerIndices ?? this.availablePlayerIndices,
+      lastPlayerIndex: lastPlayerIndex ?? this.lastPlayerIndex,
     );
   }
 

@@ -13,7 +13,6 @@ import '../widgets/edit_category_dialog.dart';
 import '../widgets/edit_challenge_dialog.dart';
 import '../widgets/edit_question_dialog.dart';
 import 'home_screen.dart';
-import 'login_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -146,7 +145,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     if (confirm == true) {
       await _authService.logout();
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
+        MaterialPageRoute(builder: (context) => const HomeScreen()),
       );
     }
   }
@@ -165,6 +164,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         foregroundColor: Colors.white,
         centerTitle: true,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => const HomeScreen()),
+            );
+          },
+        ),
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.person, color: Colors.white),
@@ -174,7 +182,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   _showUserProfile();
                   break;
                 case 'home':
-                  Navigator.push(
+                  Navigator.pushReplacement(
                     context,
                     MaterialPageRoute(builder: (context) => const HomeScreen()),
                   );

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/audio_service.dart';
 import 'home_screen.dart';
 
 class OnlineResultScreen extends StatefulWidget {
@@ -23,6 +24,7 @@ class _OnlineResultScreenState extends State<OnlineResultScreen>
   late AnimationController _confettiController;
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
+  final AudioService _audioService = AudioService();
 
   @override
   void initState() {
@@ -44,12 +46,23 @@ class _OnlineResultScreenState extends State<OnlineResultScreen>
 
     _fadeController.forward();
     _confettiController.repeat();
+
+    // تشغيل موسيقى النتائج
+    _initializeAudio();
+  }
+
+  // تهيئة المؤثرات الصوتية
+  Future<void> _initializeAudio() async {
+    await _audioService.initialize();
+    // تشغيل موسيقى النتائج
+    await _audioService.playMusic('results_music.mp3');
   }
 
   @override
   void dispose() {
     _confettiController.dispose();
     _fadeController.dispose();
+    _audioService.stopMusic();
     super.dispose();
   }
 
@@ -142,101 +155,92 @@ class _OnlineResultScreenState extends State<OnlineResultScreen>
               // Winner announcement
               if (winner != null) ...[
                 const SizedBox(height: 20),
-                RotationTransition(
-                  turns: _confettiController,
-                  child: Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors:
-                            hasTie
-                                ? [
-                                  Colors.purple.shade400,
-                                  Colors.purple.shade600,
-                                ]
-                                : [
-                                  Colors.amber.shade400,
-                                  Colors.amber.shade600,
-                                ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: (hasTie ? Colors.purple : Colors.amber)
-                              .withOpacity(0.3),
-                          spreadRadius: 5,
-                          blurRadius: 15,
-                          offset: const Offset(0, 5),
-                        ),
-                      ],
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors:
+                          hasTie
+                              ? [Colors.purple.shade400, Colors.purple.shade600]
+                              : [Colors.amber.shade400, Colors.amber.shade600],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
-                    child: Column(
-                      children: [
-                        Icon(
-                          hasTie ? Icons.people : Icons.emoji_events,
-                          size: 60,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (hasTie ? Colors.purple : Colors.amber)
+                            .withOpacity(0.3),
+                        spreadRadius: 5,
+                        blurRadius: 15,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(
+                        hasTie ? Icons.people : Icons.emoji_events,
+                        size: 60,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        hasTie ? '🤝 تعادل! 🤝' : '🎉 الفائز 🎉',
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
                           color: Colors.white,
                         ),
-                        const SizedBox(height: 10),
-                        Text(
-                          hasTie ? '🤝 تعادل! 🤝' : '🎉 الفائز 🎉',
-                          style: const TextStyle(
-                            fontSize: 24,
+                      ),
+                      const SizedBox(height: 10),
+                      if (hasTie) ...[
+                        const Text(
+                          'الفائزون:',
+                          style: TextStyle(
+                            fontSize: 18,
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
                           ),
                         ),
-                        const SizedBox(height: 10),
-                        if (hasTie) ...[
-                          const Text(
-                            'الفائزون:',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          ...winners.map(
-                            (winner) => Text(
-                              winner['name'] ?? '',
-                              style: const TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            '${winners[0]['score']} نقطة لكل منهم من ${widget.totalQuestions}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ] else ...[
-                          Text(
+                        const SizedBox(height: 5),
+                        ...winners.map(
+                          (winner) => Text(
                             winner['name'] ?? '',
                             style: const TextStyle(
-                              fontSize: 28,
+                              fontSize: 22,
                               fontWeight: FontWeight.bold,
                               color: Colors.white,
                             ),
                           ),
-                          const SizedBox(height: 5),
-                          Text(
-                            '${winner['score']} نقطة من ${widget.totalQuestions}',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              color: Colors.white,
-                            ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          '${winners[0]['score']} نقطة لكل منهم من ${widget.totalQuestions}',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            color: Colors.white,
                           ),
-                        ],
+                        ),
+                      ] else ...[
+                        Text(
+                          winner['name'] ?? '',
+                          style: const TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          '${winner['score']} نقطة من ${widget.totalQuestions}',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            color: Colors.white,
+                          ),
+                        ),
                       ],
-                    ),
+                    ],
                   ),
                 ),
               ],

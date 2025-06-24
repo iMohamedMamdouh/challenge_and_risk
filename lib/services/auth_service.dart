@@ -267,17 +267,40 @@ class AuthService {
       print('🔐 محاولة تسجيل الدخول باسم المستخدم: $username');
 
       final hashedPassword = _hashPassword(password);
+      print('🔑 كلمة المرور المشفرة: ${hashedPassword.substring(0, 10)}...');
+
       final usersSnapshot = await _database.child('users').get();
 
       if (usersSnapshot.exists) {
         final usersValue = usersSnapshot.value;
         if (usersValue != null && usersValue is Map<Object?, Object?>) {
           final usersData = Map<String, dynamic>.from(usersValue);
+          print(
+            '👥 تم العثور على ${usersData.keys.length} مستخدم في قاعدة البيانات',
+          );
 
           for (String userId in usersData.keys) {
             final userValue = usersData[userId];
             if (userValue != null && userValue is Map<Object?, Object?>) {
               final userData = Map<String, dynamic>.from(userValue);
+
+              print('🔍 فحص المستخدم: ${userData['username']}');
+              print('   - المعرف: $userId');
+              print('   - اسم المستخدم: ${userData['username']}');
+              print('   - الدور: ${userData['role']}');
+              print('   - نشط: ${userData['isActive'] ?? true}');
+              print(
+                '   - كلمة المرور موجودة: ${userData['passwordHash'] != null}',
+              );
+
+              if (userData['passwordHash'] != null) {
+                print(
+                  '   - كلمة المرور المحفوظة: ${userData['passwordHash'].substring(0, 10)}...',
+                );
+                print(
+                  '   - تطابق كلمة المرور: ${userData['passwordHash'] == hashedPassword}',
+                );
+              }
 
               if (userData['username'] == username &&
                   userData['passwordHash'] == hashedPassword &&
@@ -292,7 +315,9 @@ class AuthService {
                 });
 
                 await _setCurrentUser(user, rememberMe: rememberMe);
-                print('✅ تم تسجيل الدخول بنجاح');
+                print(
+                  '✅ تم تسجيل الدخول بنجاح للمستخدم: ${user.username} (${user.role})',
+                );
                 return true;
               }
             }
@@ -303,6 +328,9 @@ class AuthService {
       }
 
       print('❌ لم يتم العثور على مستخدم مطابق');
+      print(
+        '❌ المطلوب: username=$username, password hash=${hashedPassword.substring(0, 10)}...',
+      );
       throw Exception('اسم المستخدم أو كلمة المرور غير صحيحة');
     } catch (e) {
       print('❌ خطأ في تسجيل الدخول: $e');
@@ -389,6 +417,92 @@ class AuthService {
     }
   }
 
+  // تسجيل مستخدم جديد بـ اسم المستخدم وكلمة المرور فقط
+  Future<bool> register(
+    String username,
+    String password, {
+    String? email,
+  }) async {
+    try {
+      print('📝 إنشاء حساب جديد للمستخدم: $username');
+
+      if (username.trim().isEmpty) {
+        throw Exception('اسم المستخدم مطلوب');
+      }
+
+      if (password.length < 6) {
+        throw Exception('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+      }
+
+      // التحقق من عدم وجود اسم المستخدم مسبقاً
+      final usersSnapshot = await _database.child('users').get();
+      if (usersSnapshot.exists) {
+        final usersValue = usersSnapshot.value;
+        if (usersValue != null && usersValue is Map<Object?, Object?>) {
+          final usersData = Map<String, dynamic>.from(usersValue);
+
+          for (String userId in usersData.keys) {
+            final userValue = usersData[userId];
+            if (userValue != null && userValue is Map<Object?, Object?>) {
+              final userData = Map<String, dynamic>.from(userValue);
+              if (userData['username'] == username) {
+                throw Exception('اسم المستخدم موجود بالفعل');
+              }
+              if (email != null && userData['email'] == email) {
+                throw Exception('البريد الإلكتروني مستخدم بالفعل');
+              }
+            }
+          }
+        }
+      }
+
+      // إنشاء معرف فريد للمستخدم
+      final userId =
+          'user_${DateTime.now().millisecondsSinceEpoch}_${username.hashCode.abs()}';
+
+      // تشفير كلمة المرور
+      final hashedPassword = _hashPassword(password);
+      print('🔐 تم تشفير كلمة المرور للمستخدم الجديد');
+
+      final user = AppUser(
+        id: userId,
+        username: username,
+        email: email ?? '$username@local.app',
+        role: UserRole.user,
+        createdAt: DateTime.now(),
+        lastLogin: DateTime.now(),
+        passwordHash: hashedPassword,
+        isActive: true,
+      );
+
+      await _database.child('users').child(userId).set(user.toMap());
+      print('✅ تم حفظ بيانات المستخدم الجديد');
+
+      // التحقق من الحفظ
+      final verifySnapshot = await _database.child('users').child(userId).get();
+      if (verifySnapshot.exists) {
+        final savedData = verifySnapshot.value;
+        if (savedData != null && savedData is Map<Object?, Object?>) {
+          final userData = Map<String, dynamic>.from(savedData);
+          print('✅ تم التحقق من حفظ البيانات:');
+          print('   - المعرف: $userId');
+          print('   - اسم المستخدم: ${userData['username']}');
+          print('   - البريد الإلكتروني: ${userData['email']}');
+          print('   - الدور: ${userData['role']}');
+          print('   - نشط: ${userData['isActive']}');
+        }
+      }
+
+      await _setCurrentUser(user, rememberMe: true);
+      print('✅ تم تسجيل دخول المستخدم الجديد');
+
+      return true;
+    } catch (e) {
+      print('❌ خطأ في إنشاء الحساب: $e');
+      throw Exception(e.toString());
+    }
+  }
+
   // محاولة تسجيل الدخول التلقائي
   Future<bool> tryAutoLogin() async {
     try {
@@ -442,16 +556,42 @@ class AuthService {
   // تسجيل الخروج
   Future<void> logout() async {
     try {
-      await _firebaseAuth.signOut();
-      await _googleSignIn.signOut();
+      print('🚪 بدء عملية تسجيل الخروج...');
 
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('user_data');
+      // تسجيل الخروج من Firebase Auth
+      if (_firebaseAuth.currentUser != null) {
+        await _firebaseAuth.signOut();
+        print('✅ تم تسجيل الخروج من Firebase Auth');
+      }
 
+      // تسجيل الخروج من Google
+      try {
+        await _googleSignIn.signOut();
+        print('✅ تم تسجيل الخروج من Google');
+      } catch (e) {
+        print('⚠️ خطأ في تسجيل الخروج من Google: $e');
+        // لا نوقف العملية إذا فشل تسجيل الخروج من Google
+      }
+
+      // مسح بيانات الجلسة المحلية
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('user_data');
+        await prefs.remove('remember_me');
+        print('✅ تم مسح بيانات الجلسة المحلية');
+      } catch (e) {
+        print('⚠️ خطأ في مسح البيانات المحلية: $e');
+      }
+
+      // مسح المستخدم الحالي
       _currentUser = null;
       _userController.add(null);
+      print('✅ تم مسح المستخدم الحالي');
+
+      print('🎉 تم تسجيل الخروج بنجاح');
     } catch (e) {
       print('❌ خطأ في تسجيل الخروج: $e');
+      throw Exception('فشل في تسجيل الخروج: $e');
     }
   }
 
@@ -756,6 +896,28 @@ class AuthService {
     } catch (e) {
       print('❌ خطأ في اختبار اتصال Database: $e');
       return false;
+    }
+  }
+
+  // الحصول على المستخدم الحالي
+  AppUser? getCurrentUser() {
+    return _currentUser;
+  }
+
+  // تسجيل الخروج (alias for logout)
+  Future<void> signOut() async {
+    await logout();
+  }
+
+  // مسح بيانات المستخدم الحالي
+  void _clearCurrentUser() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('user_data');
+      _currentUser = null;
+      _userController.add(null);
+    } catch (e) {
+      print('❌ خطأ في مسح بيانات المستخدم: $e');
     }
   }
 }

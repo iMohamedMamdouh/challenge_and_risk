@@ -367,8 +367,18 @@ class FirebaseService {
       final room = GameRoom.fromFirestore(roomDoc);
       if (room.hostId != userId || !room.canStart) return false;
 
+      // تهيئة نظام الدوران للعبة الجديدة
+      final totalPlayers = room.players.length;
+      List<int> availableIndices = List.generate(
+        totalPlayers,
+        (index) => index,
+      );
+      availableIndices.remove(0); // إزالة اللاعب الأول (سيبدأ هو)
+
       await _roomsCollection.doc(roomCode).update({
         'state': GameState.inProgress.index,
+        'availablePlayerIndices': availableIndices,
+        'lastPlayerIndex': null, // لا يوجد لاعب سابق في البداية
       });
 
       return true;
@@ -424,43 +434,127 @@ class FirebaseService {
 
       if (currentPlayer?.id != userId) return false;
 
-      // Update score if correct
+      // Update score if correct and clear selected answers
       final updatedPlayers =
           room.players.map((player) {
             if (player.id == userId && isCorrect) {
-              return player.copyWith(score: player.score + 1);
+              return player.copyWith(
+                score: player.score + 1,
+                selectedAnswer: null,
+              );
             }
             return player.copyWith(selectedAnswer: null);
           }).toList();
 
-      // Move to next turn
-      int nextPlayerIndex = (room.currentPlayerIndex + 1) % room.players.length;
-      int nextQuestionIndex = room.currentQuestionIndex;
+      Map<String, dynamic> updateData = {
+        'players': updatedPlayers.map((p) => p.toMap()).toList(),
+      };
 
-      // If we completed a full round, move to next question
-      if (nextPlayerIndex == 0) {
-        nextQuestionIndex++;
+      if (isCorrect) {
+        // إجابة صحيحة: الانتقال للسؤال التالي + تغيير الدور
+        final nextQuestionIndex = room.currentQuestionIndex + 1;
+
+        // اختيار اللاعب التالي بنفس نظام اللعب المحلي المحسّن
+        final nextPlayerIndex = _selectNextPlayerIndex(room);
+
+        updateData.addAll({
+          'currentQuestionIndex': nextQuestionIndex,
+          'currentPlayerIndex': nextPlayerIndex,
+        });
+
+        // تحديث بيانات الدوران
+        await _updateRotationData(roomCode, room, nextPlayerIndex);
+
+        // إذا انتهت الأسئلة، إنهاء اللعبة
+        if (nextQuestionIndex >= room.questions.length) {
+          updateData['state'] = GameState.finished.index;
+        }
+      } else {
+        // إجابة خاطئة: تغيير الدور فقط (نفس السؤال)
+        final nextPlayerIndex = _selectNextPlayerIndex(room);
+        updateData['currentPlayerIndex'] = nextPlayerIndex;
+
+        // تحديث بيانات الدوران
+        await _updateRotationData(roomCode, room, nextPlayerIndex);
       }
 
-      // Check if game is finished
-      final gameState =
-          nextQuestionIndex >= room.questions.length
-              ? GameState.finished
-              : GameState.inProgress;
-
-      await _roomsCollection.doc(roomCode).update({
-        'players': updatedPlayers.map((p) => p.toMap()).toList(),
-        'currentPlayerIndex': nextPlayerIndex,
-        'currentQuestionIndex': nextQuestionIndex,
-        'state': gameState.index,
-        'currentChallenge': isCorrect ? null : 'challenge_needed',
-      });
-
+      await _roomsCollection.doc(roomCode).update(updateData);
       return true;
     } catch (e) {
       print('Error processing answer: $e');
       return false;
     }
+  }
+
+  // اختيار اللاعب التالي بنفس نظام اللعب المحلي المحسّن
+  int _selectNextPlayerIndex(GameRoom room) {
+    final currentIndex = room.currentPlayerIndex;
+    final totalPlayers = room.players.length;
+
+    if (totalPlayers <= 1) return currentIndex;
+
+    // الحصول على القوائم المحفوظة أو إنشاء جديدة
+    List<int> availableIndices =
+        room.availablePlayerIndices != null
+            ? List.from(room.availablePlayerIndices!)
+            : List.generate(totalPlayers, (index) => index);
+
+    int? lastPlayerIndex = room.lastPlayerIndex;
+
+    // إزالة اللاعب الحالي من المتاحين
+    availableIndices.remove(currentIndex);
+
+    // إذا انتهت القائمة، إعادة تهيئة الجولة
+    if (availableIndices.isEmpty) {
+      availableIndices = List.generate(totalPlayers, (index) => index);
+      lastPlayerIndex = null; // مسح السجل للجولة الجديدة
+    }
+
+    // إنشاء قائمة اللاعبين المؤهلين (استبعاد اللاعب السابق إذا أمكن)
+    List<int> eligiblePlayers = List.from(availableIndices);
+
+    // إذا كان هناك أكثر من لاعب متاح ولاعب سابق، استبعد اللاعب السابق
+    if (eligiblePlayers.length > 1 && lastPlayerIndex != null) {
+      eligiblePlayers.remove(lastPlayerIndex);
+    }
+
+    // إذا لم يعد هناك لاعبين مؤهلين، استخدم جميع المتاحين
+    if (eligiblePlayers.isEmpty) {
+      eligiblePlayers = List.from(availableIndices);
+    }
+
+    // اختيار عشوائي من المؤهلين
+    final random = Random();
+    final randomIndex = random.nextInt(eligiblePlayers.length);
+    final selectedPlayer = eligiblePlayers[randomIndex];
+
+    return selectedPlayer;
+  }
+
+  // تحديث بيانات الدوران في Firebase
+  Future<void> _updateRotationData(
+    String roomCode,
+    GameRoom room,
+    int nextPlayerIndex,
+  ) async {
+    List<int> availableIndices =
+        room.availablePlayerIndices != null
+            ? List.from(room.availablePlayerIndices!)
+            : List.generate(room.players.length, (index) => index);
+
+    // إزالة اللاعب المختار من المتاحين
+    availableIndices.remove(nextPlayerIndex);
+
+    // إذا انتهت القائمة، إعادة تهيئة
+    if (availableIndices.isEmpty) {
+      availableIndices = List.generate(room.players.length, (index) => index);
+      availableIndices.remove(nextPlayerIndex);
+    }
+
+    await _roomsCollection.doc(roomCode).update({
+      'availablePlayerIndices': availableIndices,
+      'lastPlayerIndex': room.currentPlayerIndex,
+    });
   }
 
   // Set challenge for wrong answer
@@ -483,6 +577,42 @@ class FirebaseService {
       return true;
     } catch (e) {
       print('Error completing challenge: $e');
+      return false;
+    }
+  }
+
+  // إكمال التحدي والانتقال للاعب التالي
+  Future<bool> completeChallengeAndSwitchTurn(String roomCode) async {
+    try {
+      final roomDoc = await _roomsCollection.doc(roomCode).get();
+      if (!roomDoc.exists) return false;
+
+      final room = GameRoom.fromFirestore(roomDoc);
+
+      // اختيار اللاعب التالي عشوائياً (تجنب نفس اللاعب)
+      int nextPlayerIndex = room.currentPlayerIndex;
+      if (room.players.length > 1) {
+        List<int> availableIndices = [];
+        for (int i = 0; i < room.players.length; i++) {
+          if (i != room.currentPlayerIndex) {
+            availableIndices.add(i);
+          }
+        }
+        if (availableIndices.isNotEmpty) {
+          final random = Random();
+          nextPlayerIndex =
+              availableIndices[random.nextInt(availableIndices.length)];
+        }
+      }
+
+      await _roomsCollection.doc(roomCode).update({
+        'currentChallenge': null,
+        'currentPlayerIndex': nextPlayerIndex,
+      });
+
+      return true;
+    } catch (e) {
+      print('Error completing challenge and switching turn: $e');
       return false;
     }
   }
@@ -1665,7 +1795,6 @@ class FirebaseService {
                 isEqualTo: _generateQuestionHash(question.questionText),
               )
               .get();
-
       if (existingQuery.docs.isNotEmpty) {
         print('⚠️ السؤال موجود مسبقاً في قاعدة البيانات');
         return QuestionAddResult.duplicate; // السؤال موجود مسبقاً

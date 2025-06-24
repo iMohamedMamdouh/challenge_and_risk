@@ -42,12 +42,11 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen>
     WidgetsBinding.instance.addObserver(this);
 
     _setupRoomListener();
-    _firebaseService.startInactivityMonitoring(widget.roomCode);
+    // تم إزالة مراقبة حالة الاتصال
     _firebaseService.startPeriodicCleanup(
       widget.roomCode,
     ); // التنظيف الدوري (إزالة اللاعبين المنقطعين معطلة)
-    // تحديث حالة اللاعب كمتصل عند دخول الصفحة
-    _firebaseService.updatePlayerStatus(widget.roomCode, true);
+    // تم إزالة تحديث حالة اللاعب
   }
 
   @override
@@ -55,11 +54,9 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen>
     // إزالة مراقب حالة التطبيق
     WidgetsBinding.instance.removeObserver(this);
 
-    // تحديث حالة اللاعب كغير متصل عند مغادرة الصفحة
-    _firebaseService.updatePlayerStatus(widget.roomCode, false);
+    // تم إزالة تحديث حالة اللاعب
 
-    // إيقاف مراقبة عدم النشاط والتنظيف الدوري
-    _firebaseService.stopInactivityMonitoring();
+    // تم إزالة إيقاف مراقبة عدم النشاط
     _firebaseService.stopPeriodicCleanup();
 
     _roomSubscription?.cancel();
@@ -72,28 +69,21 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen>
 
     switch (state) {
       case AppLifecycleState.resumed:
-        // عندما يعود المستخدم للتطبيق، حدث حالته كمتصل
-        print('📱 التطبيق عاد للمقدمة - تحديث حالة الاتصال');
-        _firebaseService.updatePlayerStatus(widget.roomCode, true);
-        _firebaseService.startInactivityMonitoring(widget.roomCode);
+        // تم إزالة مراقبة حالة الاتصال
+        print('📱 التطبيق عاد للمقدمة');
         break;
       case AppLifecycleState.paused:
       case AppLifecycleState.inactive:
-        // عندما يذهب التطبيق للخلفية أو يصبح غير نشط، حدث حالته كغير متصل
-        print('📴 التطبيق ذهب للخلفية - تحديث حالة الاتصال');
-        _firebaseService.updatePlayerStatus(widget.roomCode, false);
-        _firebaseService.stopInactivityMonitoring();
+        // تم إزالة مراقبة حالة الاتصال
+        print('📴 التطبيق ذهب للخلفية');
         break;
       case AppLifecycleState.detached:
-        // عندما يتم إغلاق التطبيق تماماً
-        print('🔴 التطبيق تم إغلاقه - تحديث حالة الاتصال');
-        _firebaseService.updatePlayerStatus(widget.roomCode, false);
-        _firebaseService.stopInactivityMonitoring();
+        // تم إزالة مراقبة حالة الاتصال
+        print('🔴 التطبيق تم إغلاقه');
         break;
       case AppLifecycleState.hidden:
-        // حالة مخفية (Android 10+)
-        print('👁️ التطبيق مخفي - تحديث حالة الاتصال');
-        _firebaseService.updatePlayerStatus(widget.roomCode, false);
+        // تم إزالة مراقبة حالة الاتصال
+        print('👁️ التطبيق مخفي');
         break;
     }
   }
@@ -192,81 +182,6 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen>
 
   void _startGame() async {
     if (!widget.isHost || (_currentRoom?.players.length ?? 0) < 2) return;
-
-    // التحقق من أن جميع اللاعبين متصلين
-    final offlinePlayers =
-        _currentRoom?.players.where((player) => !player.isOnline).toList() ??
-        [];
-
-    if (offlinePlayers.isNotEmpty) {
-      // عرض رسالة تحذيرية مع أسماء اللاعبين غير المتصلين
-      final offlineNames = offlinePlayers.map((p) => p.name).join('، ');
-
-      showDialog(
-        context: context,
-        builder:
-            (context) => AlertDialog(
-              title: Row(
-                children: [
-                  Icon(Icons.warning, color: Colors.orange.shade600, size: 28),
-                  const SizedBox(width: 10),
-                  const Text('تحذير'),
-                ],
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'لا يمكن بدء اللعبة لوجود لاعبين غير متصلين:',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.orange.shade200),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.person_off,
-                          color: Colors.orange.shade600,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            offlineNames,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.orange.shade800,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 15),
-                  const Text(
-                    'يمكنك طرد اللاعبين غير المتصلين أو انتظار عودتهم.',
-                    style: TextStyle(fontSize: 14, color: Colors.grey),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('موافق'),
-                ),
-              ],
-            ),
-      );
-      return;
-    }
 
     setState(() => _isLoading = true);
 
@@ -443,8 +358,7 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen>
   Widget build(BuildContext context) {
     final players = _currentRoom?.players ?? [];
     final maxPlayers = _currentRoom?.maxPlayers ?? 4;
-    final allPlayersOnline = players.every((player) => player.isOnline);
-    final canStart = widget.isHost && players.length >= 2 && allPlayersOnline;
+    final canStart = widget.isHost && players.length >= 2;
 
     return PopScope(
       canPop: false,
@@ -656,7 +570,7 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen>
                                   itemBuilder: (context, index) {
                                     if (index < players.length) {
                                       final player = players[index];
-                                      return _buildPlayerCard(player);
+                                      return _buildPlayerCard(player, false);
                                     } else {
                                       return _buildEmptySlot(index + 1);
                                     }
@@ -796,35 +710,29 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen>
     );
   }
 
-  Widget _buildPlayerCard(OnlinePlayer player) {
+  Widget _buildPlayerCard(OnlinePlayer player, bool canKick) {
     final bool isHost = player.isHost;
-    final bool isOnline = player.isOnline;
-    final bool canKick =
-        widget.isHost &&
-        !player.isHost; // المضيف يمكنه طرد اللاعبين العاديين فقط
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors:
-              isOnline
-                  ? [Colors.green.shade50, Colors.green.shade100]
-                  : [Colors.grey.shade50, Colors.grey.shade100],
+          colors: [Colors.white, Colors.grey.shade50],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isOnline ? Colors.green.shade300 : Colors.grey.shade300,
+          color: Colors.grey.shade300,
           width: 1.5,
+          style: BorderStyle.solid,
         ),
         boxShadow: [
           BoxShadow(
-            color: (isOnline ? Colors.green : Colors.grey).withOpacity(0.1),
+            color: Colors.grey.withOpacity(0.1),
             spreadRadius: 1,
-            blurRadius: 3,
+            blurRadius: 4,
             offset: const Offset(0, 2),
           ),
         ],
@@ -836,30 +744,21 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen>
             height: 45,
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors:
-                    isOnline
-                        ? [Colors.green.shade400, Colors.green.shade600]
-                        : [Colors.grey.shade400, Colors.grey.shade600],
+                colors: [Colors.blue.shade400, Colors.blue.shade600],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
               borderRadius: BorderRadius.circular(22.5),
               boxShadow: [
                 BoxShadow(
-                  color: (isOnline ? Colors.green : Colors.grey).withOpacity(
-                    0.3,
-                  ),
+                  color: Colors.blue.withOpacity(0.3),
                   spreadRadius: 1,
-                  blurRadius: 2,
-                  offset: const Offset(0, 1),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
                 ),
               ],
             ),
-            child: Icon(
-              isHost ? Icons.star : Icons.person,
-              color: Colors.white,
-              size: 22,
-            ),
+            child: Icon(Icons.person, color: Colors.white, size: 24),
           ),
           const SizedBox(width: 15),
           Expanded(
@@ -871,11 +770,10 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen>
                     Expanded(
                       child: Text(
                         player.name,
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 17,
                           fontWeight: FontWeight.bold,
-                          color:
-                              isOnline ? Colors.black87 : Colors.grey.shade600,
+                          color: Colors.black87,
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -925,12 +823,11 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen>
                       width: 8,
                       height: 8,
                       decoration: BoxDecoration(
-                        color: isOnline ? Colors.green : Colors.grey,
+                        color: Colors.green,
                         borderRadius: BorderRadius.circular(4),
                         boxShadow: [
                           BoxShadow(
-                            color: (isOnline ? Colors.green : Colors.grey)
-                                .withOpacity(0.4),
+                            color: Colors.green.withOpacity(0.4),
                             spreadRadius: 1,
                             blurRadius: 2,
                           ),
@@ -938,15 +835,12 @@ class _OnlineLobbyScreenState extends State<OnlineLobbyScreen>
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Expanded(
+                    const Expanded(
                       child: Text(
-                        isOnline ? 'متصل الآن' : 'غير متصل',
+                        'متصل الآن',
                         style: TextStyle(
                           fontSize: 13,
-                          color:
-                              isOnline
-                                  ? Colors.green.shade700
-                                  : Colors.grey.shade600,
+                          color: Colors.green,
                           fontWeight: FontWeight.w500,
                         ),
                       ),

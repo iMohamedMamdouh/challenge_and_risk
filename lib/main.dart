@@ -5,6 +5,7 @@ import 'firebase_options.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/splash_screen.dart';
+import 'screens/user_dashboard_screen.dart';
 import 'services/audio_service.dart';
 import 'services/auth_service.dart';
 
@@ -200,8 +201,15 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
               builder: (context) => const AdminDashboardScreen(),
             ),
           );
+        } else if (user != null) {
+          // المستخدم عادي، الذهاب للوحة المستخدم
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (context) => const UserDashboardScreen(),
+            ),
+          );
         } else {
-          // المستخدم عادي، الذهاب للصفحة الرئيسية
+          // لا يوجد مستخدم، الذهاب للصفحة الرئيسية
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (context) => const HomeScreen()),
           );

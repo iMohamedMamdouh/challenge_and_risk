@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
 import 'admin_dashboard_screen.dart';
+import 'user_dashboard_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -29,11 +30,12 @@ class _LoginScreenState extends State<LoginScreen>
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
+  late Animation<double> _scaleAnimation;
 
   // State variables
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
-  bool _rememberMe = false;
+  bool _rememberMe = true;
   bool _isLoading = false;
   int _currentTabIndex =
       0; // 0: Email/Password, 1: Username/Password, 2: Register
@@ -48,12 +50,12 @@ class _LoginScreenState extends State<LoginScreen>
 
   void _setupAnimations() {
     _animationController = AnimationController(
-      duration: const Duration(milliseconds: 1500),
+      duration: const Duration(milliseconds: 2000),
       vsync: this,
     );
 
     _fadeController = AnimationController(
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 1200),
       vsync: this,
     );
 
@@ -62,9 +64,13 @@ class _LoginScreenState extends State<LoginScreen>
     );
 
     _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 1),
+      begin: const Offset(0, 0.5),
       end: Offset.zero,
     ).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeOutCubic),
+    );
+
+    _scaleAnimation = Tween<double>(begin: 0.5, end: 1.0).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.elasticOut),
     );
 
@@ -215,6 +221,11 @@ class _LoginScreenState extends State<LoginScreen>
         context,
         MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
       );
+    } else if (user != null) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const UserDashboardScreen()),
+      );
     } else {
       Navigator.pop(context);
     }
@@ -222,198 +233,244 @@ class _LoginScreenState extends State<LoginScreen>
 
   @override
   Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+
     return Scaffold(
-      backgroundColor: Colors.deepPurple.shade50,
+      resizeToAvoidBottomInset: true,
       body: Container(
+        width: double.infinity,
+        height: double.infinity,
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
             colors: [
               Colors.deepPurple.shade400,
               Colors.deepPurple.shade600,
               Colors.deepPurple.shade800,
             ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
         ),
         child: SafeArea(
           child: FadeTransition(
             opacity: _fadeAnimation,
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  const SizedBox(height: 40),
+              padding: EdgeInsets.only(
+                left: 24,
+                right: 24,
+                top: keyboardHeight > 0 ? 20 : 40,
+                bottom: keyboardHeight > 0 ? 20 : 40,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight:
+                      screenHeight -
+                      MediaQuery.of(context).padding.top -
+                      MediaQuery.of(context).padding.bottom -
+                      48,
+                ),
+                child: IntrinsicHeight(
+                  child: Column(
+                    children: [
+                      // Top spacing - flexible
+                      if (keyboardHeight == 0)
+                        SizedBox(height: screenHeight * 0.1),
 
-                  // App Logo
-                  SlideTransition(
-                    position: _slideAnimation,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.white.withOpacity(0.3),
-                            spreadRadius: 10,
-                            blurRadius: 20,
-                          ),
-                        ],
-                      ),
-                      child: ClipOval(
-                        child: Image.asset(
-                          'assets/images/logo.png',
-                          width: 120,
-                          height: 120,
-                          fit: BoxFit.cover,
+                      // Modern Login Form Card
+                      Container(
+                        width: screenWidth > 400 ? 400 : double.infinity,
+                        padding: const EdgeInsets.all(32),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(25),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.deepPurple.withOpacity(0.3),
+                              spreadRadius: 3,
+                              blurRadius: 15,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
                         ),
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 30),
-
-                  // Welcome Text
-                  const Text(
-                    'مرحباً بك',
-                    style: TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-
-                  const SizedBox(height: 10),
-
-                  const Text(
-                    'سجل الدخول للمتابعة',
-                    style: TextStyle(fontSize: 16, color: Colors.white70),
-                  ),
-
-                  const SizedBox(height: 40),
-
-                  // Login Form Card
-                  SlideTransition(
-                    position: _slideAnimation,
-                    child: Container(
-                      padding: const EdgeInsets.all(25),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            spreadRadius: 5,
-                            blurRadius: 15,
-                            offset: const Offset(0, 5),
-                          ),
-                        ],
-                      ),
-                      child: Form(
-                        key: _formKey,
-                        child: Column(
-                          children: [
-                            // Tab Bar
-                            Container(
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade100,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Row(
-                                children: [
-                                  _buildTabButton('بريد إلكتروني', 0),
-                                  _buildTabButton('اسم مستخدم', 1),
-                                  _buildTabButton('تسجيل جديد', 2),
-                                ],
-                              ),
-                            ),
-
-                            const SizedBox(height: 25),
-
-                            // Form Fields based on selected tab
-                            AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 300),
-                              child: _buildFormContent(),
-                            ),
-
-                            if (_errorMessage.isNotEmpty) ...[
-                              const SizedBox(height: 15),
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Modern Tab Bar
                               Container(
-                                padding: const EdgeInsets.all(12),
+                                padding: const EdgeInsets.all(4),
                                 decoration: BoxDecoration(
-                                  color: Colors.red.shade50,
-                                  borderRadius: BorderRadius.circular(8),
+                                  color: Colors.grey.shade50,
+                                  borderRadius: BorderRadius.circular(16),
                                   border: Border.all(
-                                    color: Colors.red.shade200,
+                                    color: Colors.grey.shade200,
+                                    width: 1,
                                   ),
                                 ),
                                 child: Row(
                                   children: [
-                                    Icon(
-                                      Icons.error_outline,
-                                      color: Colors.red.shade600,
+                                    _buildModernTabButton(
+                                      'دخول',
+                                      0,
+                                      Icons.login,
                                     ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(
-                                        _errorMessage,
-                                        style: TextStyle(
-                                          color: Colors.red.shade700,
-                                          fontSize: 14,
-                                        ),
-                                      ),
+                                    _buildModernTabButton(
+                                      'مستخدم',
+                                      1,
+                                      Icons.person,
+                                    ),
+                                    _buildModernTabButton(
+                                      'تسجيل',
+                                      2,
+                                      Icons.person_add,
                                     ),
                                   ],
                                 ),
                               ),
-                            ],
 
-                            const SizedBox(height: 25),
+                              const SizedBox(height: 24),
 
-                            // Action Buttons
-                            _buildActionButtons(),
-
-                            // Google Sign-In Button (for non-register tabs)
-                            if (_currentTabIndex != 2) ...[
-                              const SizedBox(height: 20),
-                              const Row(
-                                children: [
-                                  Expanded(child: Divider()),
-                                  Padding(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: 15,
+                              // Form Fields based on selected tab
+                              AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 400),
+                                transitionBuilder: (child, animation) {
+                                  return FadeTransition(
+                                    opacity: animation,
+                                    child: SlideTransition(
+                                      position: Tween<Offset>(
+                                        begin: const Offset(0.1, 0),
+                                        end: Offset.zero,
+                                      ).animate(animation),
+                                      child: child,
                                     ),
-                                    child: Text(
-                                      'أو',
-                                      style: TextStyle(color: Colors.grey),
+                                  );
+                                },
+                                child: _buildFormContent(),
+                              ),
+
+                              if (_errorMessage.isNotEmpty) ...[
+                                const SizedBox(height: 16),
+                                Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red.shade50,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: Colors.red.shade200,
+                                      width: 1,
                                     ),
                                   ),
-                                  Expanded(child: Divider()),
-                                ],
-                              ),
-                              const SizedBox(height: 20),
-                              _buildGoogleSignInButton(),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.error_outline,
+                                        color: Colors.red.shade600,
+                                        size: 20,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          _errorMessage,
+                                          style: TextStyle(
+                                            color: Colors.red.shade700,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+
+                              const SizedBox(height: 24),
+
+                              // Action Buttons
+                              _buildActionButtons(),
+
+                              // Google Sign-In Button (for non-register tabs)
+                              if (_currentTabIndex != 2) ...[
+                                const SizedBox(height: 20),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Container(
+                                        height: 1,
+                                        color: Colors.grey.shade300,
+                                      ),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                      ),
+                                      child: Text(
+                                        'أو',
+                                        style: TextStyle(
+                                          color: Colors.grey.shade600,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Container(
+                                        height: 1,
+                                        color: Colors.grey.shade300,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 20),
+                                _buildGoogleSignInButton(),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
                       ),
-                    ),
-                  ),
 
-                  const SizedBox(height: 30),
-
-                  // Guest Continue Button
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text(
-                      'المتابعة كضيف',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        decoration: TextDecoration.underline,
-                      ),
-                    ),
+                      // Bottom spacing and back button
+                      if (keyboardHeight == 0) ...[
+                        const Spacer(),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 30, bottom: 20),
+                          child: TextButton.icon(
+                            onPressed: () => Navigator.pop(context),
+                            icon: Icon(
+                              Icons.arrow_back,
+                              color: Colors.white.withOpacity(0.9),
+                              size: 18,
+                            ),
+                            label: Text(
+                              'العودة للصفحة الرئيسية',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.9),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 10,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                side: BorderSide(
+                                  color: Colors.white.withOpacity(0.3),
+                                  width: 1,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ] else ...[
+                        const SizedBox(height: 20),
+                      ],
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -422,7 +479,7 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Widget _buildTabButton(String title, int index) {
+  Widget _buildModernTabButton(String title, int index, IconData icon) {
     final isSelected = _currentTabIndex == index;
     return Expanded(
       child: GestureDetector(
@@ -432,20 +489,42 @@ class _LoginScreenState extends State<LoginScreen>
               _errorMessage = '';
             }),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
-            color: isSelected ? Colors.deepPurple : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
+            color: isSelected ? Colors.deepPurple.shade600 : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow:
+                isSelected
+                    ? [
+                      BoxShadow(
+                        color: Colors.deepPurple.withOpacity(0.3),
+                        spreadRadius: 0,
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ]
+                    : null,
           ),
-          child: Text(
-            title,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: isSelected ? Colors.white : Colors.grey.shade600,
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              fontSize: 14,
-            ),
+          child: Column(
+            children: [
+              Icon(
+                icon,
+                color: isSelected ? Colors.white : Colors.grey.shade600,
+                size: 18,
+              ),
+              const SizedBox(height: 3),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.grey.shade600,
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  fontSize: 12,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -458,35 +537,35 @@ class _LoginScreenState extends State<LoginScreen>
         return Column(
           key: const ValueKey('email_login'),
           children: [
-            _buildEmailField(),
-            const SizedBox(height: 15),
-            _buildPasswordField(),
-            const SizedBox(height: 15),
-            _buildRememberMeCheckbox(),
+            _buildModernEmailField(),
+            const SizedBox(height: 16),
+            _buildModernPasswordField(),
+            const SizedBox(height: 16),
+            _buildModernRememberMeCheckbox(),
           ],
         );
       case 1: // Username/Password Login
         return Column(
           key: const ValueKey('username_login'),
           children: [
-            _buildUsernameField(),
-            const SizedBox(height: 15),
-            _buildPasswordField(),
-            const SizedBox(height: 15),
-            _buildRememberMeCheckbox(),
+            _buildModernUsernameField(),
+            const SizedBox(height: 16),
+            _buildModernPasswordField(),
+            const SizedBox(height: 16),
+            _buildModernRememberMeCheckbox(),
           ],
         );
       case 2: // Register
         return Column(
           key: const ValueKey('register'),
           children: [
-            _buildRegisterUsernameField(),
-            const SizedBox(height: 15),
-            _buildEmailField(),
-            const SizedBox(height: 15),
-            _buildPasswordField(),
-            const SizedBox(height: 15),
-            _buildConfirmPasswordField(),
+            _buildModernRegisterUsernameField(),
+            const SizedBox(height: 16),
+            _buildModernEmailField(),
+            const SizedBox(height: 16),
+            _buildModernPasswordField(),
+            const SizedBox(height: 16),
+            _buildModernConfirmPasswordField(),
           ],
         );
       default:
@@ -494,18 +573,81 @@ class _LoginScreenState extends State<LoginScreen>
     }
   }
 
-  Widget _buildEmailField() {
-    return TextFormField(
-      controller: _emailController,
-      decoration: InputDecoration(
-        labelText: 'البريد الإلكتروني',
-        prefixIcon: const Icon(Icons.email_outlined, color: Colors.deepPurple),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.deepPurple, width: 2),
-        ),
+  Widget _buildModernTextField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    required String? Function(String?) validator,
+    bool obscureText = false,
+    Widget? suffixIcon,
+    TextInputType? keyboardType,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 0,
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
+      child: TextFormField(
+        controller: controller,
+        obscureText: obscureText,
+        keyboardType: keyboardType,
+        decoration: InputDecoration(
+          labelText: label,
+          prefixIcon: Container(
+            margin: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: Colors.deepPurple.shade50,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: Colors.deepPurple.shade600, size: 18),
+          ),
+          suffixIcon: suffixIcon,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(color: Colors.deepPurple.shade600, width: 2),
+          ),
+          errorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(color: Colors.red.shade400, width: 2),
+          ),
+          filled: true,
+          fillColor: Colors.grey.shade50,
+          labelStyle: TextStyle(
+            color: Colors.grey.shade700,
+            fontWeight: FontWeight.w500,
+            fontSize: 14,
+          ),
+          contentPadding: const EdgeInsets.symmetric(
+            vertical: 16,
+            horizontal: 16,
+          ),
+        ),
+        validator: validator,
+      ),
+    );
+  }
+
+  Widget _buildModernEmailField() {
+    return _buildModernTextField(
+      controller: _emailController,
+      label: 'البريد الإلكتروني',
+      icon: Icons.email_outlined,
       keyboardType: TextInputType.emailAddress,
       validator: (value) {
         if (value == null || value.trim().isEmpty) {
@@ -519,18 +661,11 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Widget _buildUsernameField() {
-    return TextFormField(
+  Widget _buildModernUsernameField() {
+    return _buildModernTextField(
       controller: _usernameController,
-      decoration: InputDecoration(
-        labelText: 'اسم المستخدم',
-        prefixIcon: const Icon(Icons.person_outline, color: Colors.deepPurple),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.deepPurple, width: 2),
-        ),
-      ),
+      label: 'اسم المستخدم',
+      icon: Icons.person_outline,
       validator: (value) {
         if (value == null || value.trim().isEmpty) {
           return 'يرجى إدخال اسم المستخدم';
@@ -540,18 +675,11 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Widget _buildRegisterUsernameField() {
-    return TextFormField(
+  Widget _buildModernRegisterUsernameField() {
+    return _buildModernTextField(
       controller: _registerUsernameController,
-      decoration: InputDecoration(
-        labelText: 'اسم المستخدم',
-        prefixIcon: const Icon(Icons.person_outline, color: Colors.deepPurple),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.deepPurple, width: 2),
-        ),
-      ),
+      label: 'اسم المستخدم',
+      icon: Icons.person_outline,
       validator: (value) {
         if (value == null || value.trim().isEmpty) {
           return 'يرجى إدخال اسم المستخدم';
@@ -564,26 +692,19 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Widget _buildPasswordField() {
-    return TextFormField(
+  Widget _buildModernPasswordField() {
+    return _buildModernTextField(
       controller: _passwordController,
+      label: 'كلمة المرور',
+      icon: Icons.lock_outline,
       obscureText: !_isPasswordVisible,
-      decoration: InputDecoration(
-        labelText: 'كلمة المرور',
-        prefixIcon: const Icon(Icons.lock_outline, color: Colors.deepPurple),
-        suffixIcon: IconButton(
-          icon: Icon(
-            _isPasswordVisible ? Icons.visibility_off : Icons.visibility,
-            color: Colors.deepPurple,
-          ),
-          onPressed:
-              () => setState(() => _isPasswordVisible = !_isPasswordVisible),
+      suffixIcon: IconButton(
+        icon: Icon(
+          _isPasswordVisible ? Icons.visibility_off : Icons.visibility,
+          color: Colors.deepPurple.shade600,
         ),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.deepPurple, width: 2),
-        ),
+        onPressed:
+            () => setState(() => _isPasswordVisible = !_isPasswordVisible),
       ),
       validator: (value) {
         if (value == null || value.isEmpty) {
@@ -597,28 +718,21 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Widget _buildConfirmPasswordField() {
-    return TextFormField(
+  Widget _buildModernConfirmPasswordField() {
+    return _buildModernTextField(
       controller: _confirmPasswordController,
+      label: 'تأكيد كلمة المرور',
+      icon: Icons.lock_outline,
       obscureText: !_isConfirmPasswordVisible,
-      decoration: InputDecoration(
-        labelText: 'تأكيد كلمة المرور',
-        prefixIcon: const Icon(Icons.lock_outline, color: Colors.deepPurple),
-        suffixIcon: IconButton(
-          icon: Icon(
-            _isConfirmPasswordVisible ? Icons.visibility_off : Icons.visibility,
-            color: Colors.deepPurple,
-          ),
-          onPressed:
-              () => setState(
-                () => _isConfirmPasswordVisible = !_isConfirmPasswordVisible,
-              ),
+      suffixIcon: IconButton(
+        icon: Icon(
+          _isConfirmPasswordVisible ? Icons.visibility_off : Icons.visibility,
+          color: Colors.deepPurple.shade600,
         ),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.deepPurple, width: 2),
-        ),
+        onPressed:
+            () => setState(
+              () => _isConfirmPasswordVisible = !_isConfirmPasswordVisible,
+            ),
       ),
       validator: (value) {
         if (value == null || value.isEmpty) {
@@ -632,15 +746,31 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Widget _buildRememberMeCheckbox() {
+  Widget _buildModernRememberMeCheckbox() {
     return Row(
       children: [
-        Checkbox(
-          value: _rememberMe,
-          onChanged: (value) => setState(() => _rememberMe = value ?? false),
-          activeColor: Colors.deepPurple,
+        Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            color: Colors.grey.shade50,
+          ),
+          child: Checkbox(
+            value: _rememberMe,
+            onChanged: (value) => setState(() => _rememberMe = value ?? false),
+            activeColor: Colors.deepPurple.shade600,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
         ),
-        const Text('تذكرني'),
+        const SizedBox(width: 8),
+        Text(
+          'تذكرني',
+          style: TextStyle(
+            color: Colors.grey.shade700,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
       ],
     );
   }
@@ -648,39 +778,51 @@ class _LoginScreenState extends State<LoginScreen>
   Widget _buildActionButtons() {
     String buttonText;
     VoidCallback? onPressed;
+    IconData buttonIcon;
 
     switch (_currentTabIndex) {
       case 0:
-        buttonText = 'تسجيل الدخول بالبريد الإلكتروني';
+        buttonText = 'تسجيل الدخول';
+        buttonIcon = Icons.login;
         onPressed = _isLoading ? null : _loginWithEmail;
         break;
       case 1:
         buttonText = 'تسجيل الدخول';
+        buttonIcon = Icons.login;
         onPressed = _isLoading ? null : _loginWithUsername;
         break;
       case 2:
-        buttonText = 'إنشاء حساب';
+        buttonText = 'إنشاء حساب جديد';
+        buttonIcon = Icons.person_add;
         onPressed = _isLoading ? null : _registerWithEmail;
         break;
       default:
         buttonText = 'تسجيل الدخول';
+        buttonIcon = Icons.login;
         onPressed = null;
     }
 
-    return SizedBox(
+    return Container(
       width: double.infinity,
-      child: ElevatedButton(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.deepPurple,
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(vertical: 15),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          elevation: 3,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [Colors.deepPurple.shade600, Colors.deepPurple.shade700],
         ),
-        child:
+        boxShadow: [
+          BoxShadow(
+            color: Colors.deepPurple.withOpacity(0.4),
+            spreadRadius: 0,
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon:
             _isLoading
                 ? const SizedBox(
                   height: 20,
@@ -690,36 +832,66 @@ class _LoginScreenState extends State<LoginScreen>
                     valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                   ),
                 )
-                : Text(
-                  buttonText,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                : Icon(buttonIcon, size: 20),
+        label: Text(
+          buttonText,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.transparent,
+          foregroundColor: Colors.white,
+          shadowColor: Colors.transparent,
+          padding: const EdgeInsets.symmetric(vertical: 18),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
       ),
     );
   }
 
   Widget _buildGoogleSignInButton() {
-    return SizedBox(
+    return Container(
       width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade300, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 0,
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: OutlinedButton.icon(
         onPressed: _isLoading ? null : _loginWithGoogle,
-        icon: Image.asset(
-          'assets/images/google_logo.png',
-          height: 24,
-          errorBuilder:
-              (context, error, stackTrace) =>
-                  const Icon(Icons.g_mobiledata, color: Colors.red, size: 24),
+        icon: Container(
+          padding: const EdgeInsets.all(4),
+          child: Image.asset(
+            'assets/images/google_logo.png',
+            height: 20,
+            errorBuilder:
+                (context, error, stackTrace) => Icon(
+                  Icons.g_mobiledata,
+                  color: Colors.red.shade600,
+                  size: 24,
+                ),
+          ),
         ),
-        label: const Text('تسجيل الدخول بـ Google'),
+        label: const Text(
+          'تسجيل الدخول بـ Google',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
         style: OutlinedButton.styleFrom(
+          backgroundColor: Colors.white,
           foregroundColor: Colors.grey.shade700,
-          side: BorderSide(color: Colors.grey.shade300, width: 2),
-          padding: const EdgeInsets.symmetric(vertical: 15),
+          side: BorderSide.none,
+          padding: const EdgeInsets.symmetric(vertical: 18),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(16),
           ),
         ),
       ),
