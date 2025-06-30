@@ -1,15 +1,19 @@
 import 'package:flutter/material.dart';
 
+import '../models/question.dart';
 import '../services/firebase_service.dart';
+import '../widgets/edit_question_dialog.dart';
 
 class CategoryQuestionsScreen extends StatefulWidget {
   final String categoryName;
   final VoidCallback onRefresh;
+  final List<Map<String, dynamic>> categories;
 
   const CategoryQuestionsScreen({
     super.key,
     required this.categoryName,
     required this.onRefresh,
+    required this.categories,
   });
 
   @override
@@ -409,13 +413,28 @@ class _CategoryQuestionsScreenState extends State<CategoryQuestionsScreen> {
     }
   }
 
-  void _editQuestion(Map<String, dynamic> questionData) {
-    // TODO: تنفيذ تعديل السؤال
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('ميزة تعديل الأسئلة قيد التطوير'),
-        backgroundColor: Colors.orange,
-      ),
+  void _editQuestion(Map<String, dynamic> questionData) async {
+    final question = Question(
+      id: questionData['id'],
+      questionText: questionData['question'],
+      options: List<String>.from(questionData['options'] ?? []),
+      correctAnswerIndex: questionData['correct_answer'] ?? 0,
+      category: questionData['category'],
+      usageCount: questionData['usage_count'] ?? 0,
+      source: questionData['source'] ?? 'manual_add',
+    );
+    await showDialog(
+      context: context,
+      builder:
+          (context) => EditQuestionDialog(
+            question: question,
+            categories: widget.categories,
+            onQuestionUpdated: () {
+              _loadQuestions();
+              widget.onRefresh();
+              Navigator.of(context).pop();
+            },
+          ),
     );
   }
 

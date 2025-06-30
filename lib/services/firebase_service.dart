@@ -1644,7 +1644,7 @@ class FirebaseService {
         'معلومات عامة',
         'رياضة',
         'ديني',
-        'ترفيه',
+        'أفلام',
         'تكنولوجيا',
         'ألغاز منطقية',
         'علوم',
@@ -2041,9 +2041,9 @@ class FirebaseService {
           'usage_count': 0,
         },
         {
-          'id': 'default_entertainment',
-          'name': 'ترفيه',
-          'description': 'أسئلة ترفيهية وأفلام وألعاب',
+          'id': 'default_movies',
+          'name': 'أفلام',
+          'description': 'أسئلة أفلام وسينما وكرتون وألعاب',
           'icon': 'movie',
           'color': 0xFFFF9800,
           'is_custom': false,
@@ -2218,11 +2218,12 @@ class FirebaseService {
       // حذف السؤال من مجموعة الأسئلة
       await _firestore.collection('questions').doc(questionId).delete();
 
-      // إضافة السؤال المحذوف إلى مجموعة الأسئلة المحذوفة لمنع إعادة رفعه
+      // إضافة السؤال المحذوف إلى مجموعة الأسئلة المحذوفة مع جميع بياناته الأصلية
       await _firestore.collection('deleted_questions').add({
         'question_id': questionId,
         'question_text': questionText,
         'question_hash': questionHash,
+        'original_data': questionData, // حفظ جميع البيانات الأصلية للسؤال
         'deleted_at': FieldValue.serverTimestamp(),
         'deleted_by': 'admin', // يمكن تحسين هذا لاحقاً لإضافة معرف المشرف
       });
@@ -2377,7 +2378,7 @@ class FirebaseService {
     }
   }
 
-  /// استعادة سؤال محذوف (إزالته من قائمة المحذوفات)
+  /// استعادة سؤال محذوف (إعادة إضافته إلى مجموعة الأسئلة العادية)
   Future<bool> restoreDeletedQuestion(String questionText) async {
     try {
       print('🔄 جاري استعادة السؤال المحذوف...');
@@ -2399,12 +2400,49 @@ class FirebaseService {
         return false;
       }
 
-      // حذف السؤال من قائمة المحذوفات
-      for (final doc in deletedSnapshot.docs) {
-        await doc.reference.delete();
+      // الحصول على بيانات السؤال الأصلية
+      final deletedDoc = deletedSnapshot.docs.first;
+      final deletedData = deletedDoc.data();
+      final originalData =
+          deletedData['original_data'] as Map<String, dynamic>?;
+
+      if (originalData == null) {
+        print('❌ البيانات الأصلية للسؤال غير متوفرة');
+        return false;
       }
 
-      print('✅ تم استعادة السؤال من قائمة المحذوفات');
+      // فحص ما إذا كان السؤال موجود مسبقاً في مجموعة الأسئلة العادية
+      final existingSnapshot =
+          await _firestore
+              .collection('questions')
+              .where(
+                'question_hash',
+                isEqualTo: _generateQuestionHash(questionText),
+              )
+              .get();
+
+      if (existingSnapshot.docs.isNotEmpty) {
+        print('⚠️ السؤال موجود مسبقاً في مجموعة الأسئلة العادية');
+        // حذف من قائمة المحذوفات فقط
+        await deletedDoc.reference.delete();
+        print('✅ تم حذف السؤال من قائمة المحذوفات');
+        return true;
+      }
+
+      // إعادة إضافة السؤال إلى مجموعة الأسئلة العادية مع البيانات الأصلية
+      final restoredData = Map<String, dynamic>.from(originalData);
+      // إضافة معلومات الاستعادة
+      restoredData['restored_at'] = FieldValue.serverTimestamp();
+      restoredData['restored_from_deleted'] = true;
+      // إزالة الحقول التي قد تكون مشكلة عند الإضافة
+      restoredData.remove('id');
+
+      await _firestore.collection('questions').add(restoredData);
+
+      // حذف السؤال من قائمة المحذوفات
+      await deletedDoc.reference.delete();
+
+      print('✅ تم استعادة السؤال بنجاح وإضافته إلى مجموعة الأسئلة العادية');
       return true;
     } catch (e) {
       print('❌ خطأ في استعادة السؤال: $e');
@@ -2431,6 +2469,8 @@ class FirebaseService {
               'question_text': data['question_text'] ?? '',
               'deleted_at': data['deleted_at'],
               'deleted_by': data['deleted_by'] ?? 'unknown',
+              // إضافة البيانات الأصلية للتحقق من وجودها عند الاستعادة
+              'has_original_data': data['original_data'] != null,
             };
           }).toList();
 
@@ -2626,14 +2666,22 @@ class FirebaseService {
       final challengeText = challengeData['challenge'] as String;
       final challengeHash = _generateQuestionHash(challengeText);
 
+      // إضافة challenge_hash إلى البيانات الأصلية إذا لم يكن موجوداً
+      final originalDataWithHash = Map<String, dynamic>.from(challengeData);
+      if (!originalDataWithHash.containsKey('challenge_hash')) {
+        originalDataWithHash['challenge_hash'] = challengeHash;
+      }
+
       // حذف التحدي من مجموعة التحديات
       await _firestore.collection('challenges').doc(challengeId).delete();
 
-      // إضافة التحدي المحذوف إلى مجموعة التحديات المحذوفة
+      // إضافة التحدي المحذوف إلى مجموعة التحديات المحذوفة مع جميع بياناته الأصلية
       await _firestore.collection('deleted_challenges').add({
         'challenge_id': challengeId,
         'challenge_text': challengeText,
         'challenge_hash': challengeHash,
+        'original_data':
+            originalDataWithHash, // حفظ جميع البيانات الأصلية للتحدي مع الهاش
         'deleted_at': FieldValue.serverTimestamp(),
         'deleted_by': 'admin',
       });
@@ -2860,6 +2908,8 @@ class FirebaseService {
               'challenge_text': data['challenge_text'] ?? '',
               'deleted_at': data['deleted_at'],
               'deleted_by': data['deleted_by'] ?? 'unknown',
+              // إضافة البيانات الأصلية للتحقق من وجودها عند الاستعادة
+              'has_original_data': data['original_data'] != null,
             };
           }).toList();
 
@@ -2871,19 +2921,17 @@ class FirebaseService {
     }
   }
 
-  /// استعادة تحدي محذوف
+  /// استعادة تحدي محذوف (إعادة إضافته إلى مجموعة التحديات العادية)
   Future<bool> restoreDeletedChallenge(String challengeText) async {
     try {
       print('🔄 جاري استعادة التحدي المحذوف...');
+      print('🔍 نص التحدي المراد استعادته: $challengeText');
 
       // البحث عن التحدي في قائمة المحذوفات
       final deletedSnapshot =
           await _firestore
               .collection('deleted_challenges')
-              .where(
-                'challenge_hash',
-                isEqualTo: _generateQuestionHash(challengeText),
-              )
+              .where('challenge_text', isEqualTo: challengeText)
               .get();
 
       if (deletedSnapshot.docs.isEmpty) {
@@ -2891,12 +2939,56 @@ class FirebaseService {
         return false;
       }
 
-      // حذف التحدي من قائمة المحذوفات
-      for (final doc in deletedSnapshot.docs) {
-        await doc.reference.delete();
+      // الحصول على بيانات التحدي الأصلية
+      final deletedDoc = deletedSnapshot.docs.first;
+      final deletedData = deletedDoc.data();
+      final originalData =
+          deletedData['original_data'] as Map<String, dynamic>?;
+
+      if (originalData == null) {
+        print('❌ البيانات الأصلية للتحدي غير متوفرة');
+        return false;
       }
 
-      print('✅ تم استعادة التحدي من قائمة المحذوفات');
+      // فحص ما إذا كان التحدي موجود مسبقاً في مجموعة التحديات العادية
+      // نبحث باستخدام نص التحدي مباشرة
+      final existingSnapshot =
+          await _firestore
+              .collection('challenges')
+              .where('challenge', isEqualTo: challengeText)
+              .get();
+
+      if (existingSnapshot.docs.isNotEmpty) {
+        print('⚠️ التحدي موجود مسبقاً في مجموعة التحديات العادية');
+        // حذف من قائمة المحذوفات فقط
+        await deletedDoc.reference.delete();
+        print('✅ تم حذف التحدي من قائمة المحذوفات');
+        return true;
+      }
+
+      // إعادة إضافة التحدي إلى مجموعة التحديات العادية مع البيانات الأصلية
+      final restoredData = Map<String, dynamic>.from(originalData);
+
+      // إضافة معلومات الاستعادة
+      restoredData['restored_at'] = FieldValue.serverTimestamp();
+      restoredData['restored_from_deleted'] = true;
+
+      // إزالة الحقول التي قد تكون مشكلة عند الإضافة
+      restoredData.remove('id');
+
+      // إضافة hash إذا لم يكن موجوداً
+      if (!restoredData.containsKey('challenge_hash')) {
+        restoredData['challenge_hash'] = _generateQuestionHash(challengeText);
+      }
+
+      print('📝 البيانات المستعادة: ${restoredData.keys}');
+
+      await _firestore.collection('challenges').add(restoredData);
+
+      // حذف التحدي من قائمة المحذوفات
+      await deletedDoc.reference.delete();
+
+      print('✅ تم استعادة التحدي بنجاح وإضافته إلى مجموعة التحديات العادية');
       return true;
     } catch (e) {
       print('❌ خطأ في استعادة التحدي: $e');

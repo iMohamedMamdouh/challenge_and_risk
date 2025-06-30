@@ -35,7 +35,7 @@ class _EditQuestionDialogState extends State<EditQuestionDialog> {
     'معلومات عامة',
     'رياضة',
     'ديني',
-    'ترفيه',
+    'أفلام',
     'تكنولوجيا',
     'ألغاز منطقية',
     'علوم',
@@ -255,36 +255,6 @@ class _EditQuestionDialogState extends State<EditQuestionDialog> {
                       ),
 
                       const SizedBox(height: 20),
-
-                      // معلومات إضافية
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'معلومات السؤال',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey.shade700,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'معرف السؤال: ${widget.question.id ?? "غير محدد"}',
-                            ),
-                            Text(
-                              'عدد مرات الاستخدام: ${widget.question.usageCount}',
-                            ),
-                            Text('المصدر: ${widget.question.source}'),
-                          ],
-                        ),
-                      ),
                     ],
                   ),
                 ),

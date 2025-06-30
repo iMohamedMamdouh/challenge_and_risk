@@ -189,43 +189,110 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
 
   Future<void> _checkAuthStatus() async {
     try {
+      // انتظار لمدة 3 ثوانٍ لعرض Splash Screen
+      await Future.delayed(const Duration(seconds: 3));
+
       // محاولة تسجيل الدخول التلقائي
       final autoLoginSuccess = await _authService.tryAutoLogin();
 
-      if (autoLoginSuccess) {
-        final user = _authService.currentUser;
-        if (user != null && user.canManageQuestions()) {
-          // إذا كان المستخدم مشرف، الذهاب للوحة الإدارة
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (context) => const AdminDashboardScreen(),
-            ),
-          );
-        } else if (user != null) {
-          // المستخدم عادي، الذهاب للوحة المستخدم
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (context) => const UserDashboardScreen(),
-            ),
-          );
+      if (mounted) {
+        if (autoLoginSuccess) {
+          final user = _authService.currentUser;
+          if (user != null && user.canManageQuestions()) {
+            // إذا كان المستخدم مشرف، الذهاب للوحة الإدارة
+            Navigator.of(context).pushReplacement(
+              PageRouteBuilder(
+                pageBuilder:
+                    (context, animation, secondaryAnimation) =>
+                        const AdminDashboardScreen(),
+                transitionsBuilder: (
+                  context,
+                  animation,
+                  secondaryAnimation,
+                  child,
+                ) {
+                  return FadeTransition(opacity: animation, child: child);
+                },
+                transitionDuration: const Duration(milliseconds: 800),
+              ),
+            );
+          } else if (user != null) {
+            // المستخدم عادي، الذهاب للوحة المستخدم
+            Navigator.of(context).pushReplacement(
+              PageRouteBuilder(
+                pageBuilder:
+                    (context, animation, secondaryAnimation) =>
+                        const UserDashboardScreen(),
+                transitionsBuilder: (
+                  context,
+                  animation,
+                  secondaryAnimation,
+                  child,
+                ) {
+                  return FadeTransition(opacity: animation, child: child);
+                },
+                transitionDuration: const Duration(milliseconds: 800),
+              ),
+            );
+          } else {
+            // لا يوجد مستخدم، الذهاب للصفحة الرئيسية
+            Navigator.of(context).pushReplacement(
+              PageRouteBuilder(
+                pageBuilder:
+                    (context, animation, secondaryAnimation) =>
+                        const HomeScreen(),
+                transitionsBuilder: (
+                  context,
+                  animation,
+                  secondaryAnimation,
+                  child,
+                ) {
+                  return FadeTransition(opacity: animation, child: child);
+                },
+                transitionDuration: const Duration(milliseconds: 800),
+              ),
+            );
+          }
         } else {
-          // لا يوجد مستخدم، الذهاب للصفحة الرئيسية
+          // لا يوجد تسجيل دخول سابق، عرض الصفحة الرئيسية
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (context) => const HomeScreen()),
+            PageRouteBuilder(
+              pageBuilder:
+                  (context, animation, secondaryAnimation) =>
+                      const HomeScreen(),
+              transitionsBuilder: (
+                context,
+                animation,
+                secondaryAnimation,
+                child,
+              ) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+              transitionDuration: const Duration(milliseconds: 800),
+            ),
           );
         }
-      } else {
-        // لا يوجد تسجيل دخول سابق، عرض الصفحة الرئيسية
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const HomeScreen()),
-        );
       }
     } catch (e) {
       print('خطأ في فحص حالة المصادقة: $e');
       // في حالة الخطأ، الذهاب للصفحة الرئيسية
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => const HomeScreen()),
-      );
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          PageRouteBuilder(
+            pageBuilder:
+                (context, animation, secondaryAnimation) => const HomeScreen(),
+            transitionsBuilder: (
+              context,
+              animation,
+              secondaryAnimation,
+              child,
+            ) {
+              return FadeTransition(opacity: animation, child: child);
+            },
+            transitionDuration: const Duration(milliseconds: 800),
+          ),
+        );
+      }
     }
   }
 

@@ -70,7 +70,7 @@ class RoomFormWidget extends StatelessWidget {
 
             // عنوان النموذج
             Text(
-              'ألعاب متعددة اللاعبين',
+              'غرف اللعب المباشرة',
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,

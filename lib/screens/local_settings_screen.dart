@@ -36,7 +36,7 @@ class _LocalSettingsScreenState extends State<LocalSettingsScreen> {
     CategoryData('معلومات عامة', Icons.info, false),
     CategoryData('رياضة', Icons.sports_soccer, false),
     CategoryData('ديني', Icons.mosque, false),
-    CategoryData('ترفيه', Icons.movie, false),
+    CategoryData('أفلام', Icons.movie, false),
     CategoryData('تكنولوجيا', Icons.computer, false),
     CategoryData('ألغاز منطقية', Icons.psychology, false),
     CategoryData('علوم', Icons.science, false),

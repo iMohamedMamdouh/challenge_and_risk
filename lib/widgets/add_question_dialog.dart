@@ -33,7 +33,7 @@ class _AddQuestionDialogState extends State<AddQuestionDialog> {
     'معلومات عامة',
     'رياضة',
     'ديني',
-    'ترفيه',
+    'أفلام',
     'تكنولوجيا',
     'ألغاز منطقية',
     'علوم',

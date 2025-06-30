@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 
 import '../models/question.dart';
 import '../models/user.dart';
@@ -11,7 +14,6 @@ import '../widgets/add_question_dialog.dart';
 import '../widgets/category_questions_screen.dart';
 import '../widgets/edit_category_dialog.dart';
 import '../widgets/edit_challenge_dialog.dart';
-import '../widgets/edit_question_dialog.dart';
 import 'home_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
@@ -40,6 +42,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   // بيانات الفئات
   List<Map<String, dynamic>> _categories = [];
   bool _isLoadingCategories = true;
+
+  // متغير البحث للتحديات
+  final TextEditingController _challengeSearchController =
+      TextEditingController();
 
   bool _isLoading = true;
 
@@ -88,10 +94,29 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     }
   }
 
+  Future<List<dynamic>> loadQuestionsFromJson() async {
+    final String jsonString = await rootBundle.loadString(
+      'assets/data/questions.json',
+    );
+    return json.decode(jsonString) as List<dynamic>;
+  }
+
   Future<void> _loadCategories() async {
     setState(() => _isLoadingCategories = true);
     try {
       final categories = await _firebaseService.getAllCategories();
+      // تحميل الأسئلة من الملف المحلي
+      final questions = await loadQuestionsFromJson();
+      final Map<String, int> categoryCounts = {};
+      for (final q in questions) {
+        final cat = q['category'] ?? 'غير محدد';
+        categoryCounts[cat] = (categoryCounts[cat] ?? 0) + 1;
+      }
+      // ربط العدد بكل فئة
+      for (final category in categories) {
+        final name = category['name'] as String;
+        category['questions_count'] = categoryCounts[name] ?? 0;
+      }
       setState(() {
         _categories = categories;
         _isLoadingCategories = false;
@@ -235,7 +260,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
           tabs: const [
             Tab(icon: Icon(Icons.dashboard), text: 'المعلومات'),
             Tab(icon: Icon(Icons.category), text: 'الفئات'),
-            Tab(icon: Icon(Icons.quiz), text: 'الأسئلة'),
+            Tab(icon: Icon(Icons.sports_kabaddi), text: 'التحديات'),
             Tab(icon: Icon(Icons.people), text: 'المستخدمين'),
             Tab(icon: Icon(Icons.delete_sweep), text: 'المحذوفات'),
           ],
@@ -258,7 +283,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                 children: [
                   _buildDashboardTab(),
                   _buildCategoriesManagement(),
-                  _buildQuestionsTab(),
+                  _buildChallengesOnlyTab(),
                   _buildUsersManagementTab(),
                   _buildDeletedQuestionsTab(),
                 ],
@@ -629,216 +654,119 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     );
   }
 
-  Widget _buildQuestionsTab() {
-    return DefaultTabController(
-      length: 2,
-      child: Column(
-        children: [
-          // شريط التبويبات مع تحسين المساحة
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
-            ),
-            child: TabBar(
-              labelColor: Colors.deepPurple,
-              unselectedLabelColor: Colors.grey,
-              indicatorColor: Colors.deepPurple,
-              indicatorWeight: 2,
-              padding: EdgeInsets.zero,
-              labelPadding: const EdgeInsets.symmetric(vertical: 8),
-              tabs: [
-                Tab(
-                  icon: Icon(Icons.quiz, size: 20),
-                  text: 'الأسئلة (${_questions.length})',
-                  iconMargin: const EdgeInsets.only(bottom: 4),
-                ),
-                Tab(
-                  icon: Icon(Icons.sports_kabaddi, size: 20),
-                  text: 'التحديات (${_challenges.length})',
-                  iconMargin: const EdgeInsets.only(bottom: 4),
-                ),
-              ],
-            ),
-          ),
+  Widget _buildChallengesOnlyTab() {
+    // فلترة التحديات حسب البحث
+    final searchText = _challengeSearchController.text.toLowerCase();
+    final filteredChallenges =
+        _challenges.where((challenge) {
+          if (searchText.isEmpty) return true;
+          final challengeText =
+              (challenge['challenge'] ?? '').toString().toLowerCase();
+          final category =
+              (challenge['category'] ?? '').toString().toLowerCase();
+          final difficulty =
+              (challenge['difficulty'] ?? '').toString().toLowerCase();
 
-          // المحتوى
-          Expanded(
-            child: TabBarView(
-              children: [_buildQuestionsSubTab(), _buildChallengesSubTab()],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+          return challengeText.contains(searchText) ||
+              category.contains(searchText) ||
+              difficulty.contains(searchText);
+        }).toList();
 
-  Widget _buildQuestionsSubTab() {
     return Scaffold(
       body: RefreshIndicator(
         onRefresh: _loadData,
         child: Column(
           children: [
-            // شريط الإجراءات العلوي مع تحسين المساحة
+            // شريط الإجراءات العلوي
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
                 color: Colors.grey.shade50,
                 border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  Expanded(
-                    child: Text(
-                      'إدارة الأسئلة (${_questions.length} سؤال)',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.deepPurple,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => _loadData(),
-                    icon: const Icon(Icons.refresh),
-                    tooltip: 'تحديث',
-                  ),
-                  IconButton(
-                    onPressed: _uploadQuestions,
-                    icon: const Icon(Icons.upload_file),
-                    tooltip: 'رفع الأسئلة من الملف المحلي',
-                  ),
-                ],
-              ),
-            ),
-
-            // قائمة الأسئلة
-            Expanded(
-              child:
-                  _questions.isEmpty
-                      ? const Center(
-                        child: Text(
-                          'لا توجد أسئلة متاحة',
-                          style: TextStyle(fontSize: 16, color: Colors.grey),
-                        ),
-                      )
-                      : ListView.builder(
-                        padding: const EdgeInsets.all(12),
-                        itemCount: _questions.length,
-                        itemBuilder: (context, index) {
-                          final question = _questions[index];
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            child: ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor: Colors.blue.withOpacity(0.2),
-                                child: Text(
-                                  '${index + 1}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.blue,
-                                  ),
-                                ),
-                              ),
-                              title: Text(
-                                question.questionText,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'الفئة: ${question.category ?? 'غير محدد'}',
-                                  ),
-                                  if (question.usageCount > 0)
-                                    Text(
-                                      'مرات الاستخدام: ${question.usageCount}',
-                                      style: const TextStyle(
-                                        color: Colors.grey,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.edit,
-                                      color: Colors.blue,
-                                    ),
-                                    onPressed: () => _editQuestion(question),
-                                    tooltip: 'تحرير السؤال',
-                                  ),
-                                  if (_authService.currentUser
-                                          ?.canDeleteQuestions() ==
-                                      true)
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.delete,
-                                        color: Colors.red,
-                                      ),
-                                      onPressed:
-                                          () => _deleteQuestion(question),
-                                      tooltip: 'حذف السؤال',
-                                    ),
-                                ],
+                  // الصف الأول - العنوان والأيقونات
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'إدارة التحديات',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.deepPurple,
                               ),
                             ),
-                          );
-                        },
+                            Text(
+                              'عرض ${filteredChallenges.length} من أصل ${_challenges.length} تحدي',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddQuestionDialog,
-        icon: const Icon(Icons.add),
-        label: const Text('إضافة سؤال'),
-        backgroundColor: Colors.deepPurple,
-        foregroundColor: Colors.white,
-        heroTag: "add_question_fab",
-      ),
-    );
-  }
-
-  Widget _buildChallengesSubTab() {
-    return Scaffold(
-      body: RefreshIndicator(
-        onRefresh: _loadData,
-        child: Column(
-          children: [
-            // شريط الإجراءات العلوي مع تحسين المساحة
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade50,
-                border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'إدارة التحديات (${_challenges.length} تحدي)',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                      // أيقون رفع التحديات
+                      IconButton(
+                        onPressed: _uploadChallenges,
+                        icon: const Icon(Icons.upload),
+                        tooltip: 'رفع التحديات',
+                        color: Colors.blue,
+                      ),
+                      IconButton(
+                        onPressed: () => _loadData(),
+                        icon: const Icon(Icons.refresh),
+                        tooltip: 'تحديث',
                         color: Colors.deepPurple,
                       ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // الصف الثاني - شريط البحث
+                  TextField(
+                    controller: _challengeSearchController,
+                    decoration: InputDecoration(
+                      hintText: 'البحث في التحديات...',
+                      prefixIcon: const Icon(
+                        Icons.search,
+                        color: Colors.deepPurple,
+                      ),
+                      suffixIcon:
+                          _challengeSearchController.text.isNotEmpty
+                              ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  setState(() {
+                                    _challengeSearchController.clear();
+                                  });
+                                },
+                              )
+                              : null,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Colors.deepPurple),
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                     ),
-                  ),
-                  IconButton(
-                    onPressed: () => _loadData(),
-                    icon: const Icon(Icons.refresh),
-                    tooltip: 'تحديث',
-                  ),
-                  IconButton(
-                    onPressed: _uploadChallenges,
-                    icon: const Icon(Icons.upload_file),
-                    tooltip: 'رفع التحديات من الملف المحلي',
+                    onChanged: (value) {
+                      setState(() {
+                        // تحديث واجهة المستخدم عند تغيير النص
+                      });
+                    },
                   ),
                 ],
               ),
@@ -847,18 +775,48 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             // قائمة التحديات
             Expanded(
               child:
-                  _challenges.isEmpty
-                      ? const Center(
-                        child: Text(
-                          'لا توجد تحديات متاحة',
-                          style: TextStyle(fontSize: 16, color: Colors.grey),
+                  filteredChallenges.isEmpty
+                      ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              _challengeSearchController.text.isNotEmpty
+                                  ? Icons.search_off
+                                  : Icons.sports_kabaddi_outlined,
+                              size: 64,
+                              color: Colors.grey,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _challengeSearchController.text.isNotEmpty
+                                  ? 'لا توجد تحديات تطابق البحث "${_challengeSearchController.text}"'
+                                  : 'لا توجد تحديات متاحة',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                color: Colors.grey,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            if (_challengeSearchController.text.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              TextButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _challengeSearchController.clear();
+                                  });
+                                },
+                                child: const Text('مسح البحث'),
+                              ),
+                            ],
+                          ],
                         ),
                       )
                       : ListView.builder(
                         padding: const EdgeInsets.all(12),
-                        itemCount: _challenges.length,
+                        itemCount: filteredChallenges.length,
                         itemBuilder: (context, index) {
-                          final challenge = _challenges[index];
+                          final challenge = filteredChallenges[index];
                           return Card(
                             margin: const EdgeInsets.only(bottom: 8),
                             child: ListTile(
@@ -968,641 +926,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         heroTag: "add_challenge_fab",
       ),
     );
-  }
-
-  Widget _buildCategoriesManagement() {
-    return RefreshIndicator(
-      onRefresh: () async => _loadCategories(),
-      child: Column(
-        children: [
-          // شريط البحث والإجراءات
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () => _showAddCategoryDialog(),
-                    icon: const Icon(Icons.add),
-                    label: const Text('إضافة فئة جديدة'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.deepPurple,
-                      foregroundColor: Colors.white,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                IconButton(
-                  onPressed: () => _loadCategories(),
-                  icon: const Icon(Icons.refresh),
-                  tooltip: 'تحديث',
-                ),
-              ],
-            ),
-          ),
-
-          // قائمة الفئات
-          Expanded(
-            child:
-                _isLoadingCategories
-                    ? const Center(child: CircularProgressIndicator())
-                    : _categories.isEmpty
-                    ? const Center(
-                      child: Text(
-                        'لا توجد فئات متاحة',
-                        style: TextStyle(fontSize: 16, color: Colors.grey),
-                      ),
-                    )
-                    : ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: _categories.length,
-                      itemBuilder: (context, index) {
-                        final category = _categories[index];
-                        return _buildCategoryCard(category);
-                      },
-                    ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCategoryCard(Map<String, dynamic> category) {
-    final isCustom = category['is_custom'] as bool;
-    final questionsCount = category['questions_count'] as int;
-    final categoryName = category['name'] as String;
-    final description = category['description'] as String;
-    final iconName = category['icon'] as String;
-    final colorValue = category['color'] as int;
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      child: ExpansionTile(
-        leading: CircleAvatar(
-          backgroundColor: Color(colorValue).withOpacity(0.2),
-          child: Icon(_getIconData(iconName), color: Color(colorValue)),
-        ),
-        title: Text(
-          categoryName,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (description.isNotEmpty)
-              Text(
-                description,
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Icon(Icons.quiz, size: 16, color: Colors.grey.shade600),
-                const SizedBox(width: 4),
-                Text(
-                  '$questionsCount سؤال',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
-                const SizedBox(width: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color:
-                        isCustom
-                            ? Colors.orange.shade100
-                            : Colors.blue.shade100,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    isCustom ? 'مخصصة' : 'أساسية',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color:
-                          isCustom
-                              ? Colors.orange.shade800
-                              : Colors.blue.shade800,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                // أزرار الإجراءات
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: () => _viewCategoryQuestions(categoryName),
-                      icon: const Icon(Icons.list, size: 16),
-                      label: const Text('عرض الأسئلة'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                      ),
-                    ),
-                    if (isCustom) ...[
-                      ElevatedButton.icon(
-                        onPressed: () => _showEditCategoryDialog(category),
-                        icon: const Icon(Icons.edit, size: 16),
-                        label: const Text('تعديل'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                        ),
-                      ),
-                      ElevatedButton.icon(
-                        onPressed: () => _deleteCategoryConfirm(category),
-                        icon: const Icon(Icons.delete, size: 16),
-                        label: const Text('حذف'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 12),
-                // إحصائيات الفئة
-                FutureBuilder<Map<String, dynamic>>(
-                  future: _firebaseService.getCategoryDetailedStats(
-                    categoryName,
-                  ),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const SizedBox(
-                        height: 40,
-                        child: Center(child: CircularProgressIndicator()),
-                      );
-                    }
-
-                    if (!snapshot.hasData) {
-                      return const Text('لا توجد إحصائيات');
-                    }
-
-                    final stats = snapshot.data!;
-                    return _buildCategoryStats(stats);
-                  },
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCategoryStats(Map<String, dynamic> stats) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildStatItem(
-                'إجمالي الأسئلة',
-                '${stats['total_questions']}',
-                Icons.quiz,
-              ),
-              _buildStatItem(
-                'مرات الاستخدام',
-                '${stats['total_usage']}',
-                Icons.play_arrow,
-              ),
-              _buildStatItem(
-                'متوسط الاستخدام',
-                '${stats['average_usage']}',
-                Icons.analytics,
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildStatItem(
-                'غير مستخدمة',
-                '${stats['questions_without_usage']}',
-                Icons.help_outline,
-              ),
-              _buildStatItem(
-                'من الملف المحلي',
-                '${stats['questions_from_local_upload']}',
-                Icons.upload_file,
-              ),
-              _buildStatItem(
-                'مضافة يدوياً',
-                '${stats['questions_from_manual_add']}',
-                Icons.add_circle,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatItem(String label, String value, IconData icon) {
-    return Column(
-      children: [
-        Icon(icon, size: 16, color: Colors.grey.shade600),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-        ),
-        Text(
-          label,
-          style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
-          textAlign: TextAlign.center,
-        ),
-      ],
-    );
-  }
-
-  IconData _getIconData(String iconName) {
-    switch (iconName) {
-      case 'info':
-        return Icons.info;
-      case 'sports_soccer':
-        return Icons.sports_soccer;
-      case 'mosque':
-        return Icons.mosque;
-      case 'movie':
-        return Icons.movie;
-      case 'computer':
-        return Icons.computer;
-      case 'psychology':
-        return Icons.psychology;
-      case 'science':
-        return Icons.science;
-      case 'library_books':
-        return Icons.library_books;
-      case 'category':
-        return Icons.category;
-      default:
-        return Icons.help_outline;
-    }
-  }
-
-  void _showAddCategoryDialog() {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AddCategoryDialog(
-            onCategoryAdded: () {
-              _loadCategories();
-              Navigator.of(context).pop();
-            },
-          ),
-    );
-  }
-
-  void _showEditCategoryDialog(Map<String, dynamic> category) {
-    showDialog(
-      context: context,
-      builder:
-          (context) => EditCategoryDialog(
-            category: category,
-            onCategoryUpdated: () {
-              _loadCategories();
-              Navigator.of(context).pop();
-            },
-          ),
-    );
-  }
-
-  void _deleteCategoryConfirm(Map<String, dynamic> category) {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('تأكيد الحذف'),
-            content: Text(
-              'هل أنت متأكد من حذف فئة "${category['name']}"؟\n\nسيتم نقل جميع الأسئلة في هذه الفئة إلى فئة "معلومات عامة".',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('إلغاء'),
-              ),
-              ElevatedButton(
-                onPressed: () async {
-                  Navigator.of(context).pop();
-                  await _deleteCategory(category['id']);
-                },
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                child: const Text('حذف', style: TextStyle(color: Colors.white)),
-              ),
-            ],
-          ),
-    );
-  }
-
-  Future<void> _deleteCategory(String categoryId) async {
-    try {
-      final success = await _firebaseService.deleteCustomCategory(categoryId);
-      if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ تم حذف الفئة بنجاح'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        _loadCategories();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('❌ فشل في حذف الفئة'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('❌ خطأ في حذف الفئة: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  void _viewCategoryQuestions(String categoryName) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder:
-            (context) => CategoryQuestionsScreen(
-              categoryName: categoryName,
-              onRefresh: _loadData,
-            ),
-      ),
-    );
-  }
-
-  void _showUserProfile() {
-    final user = _authService.currentUser;
-    if (user == null) return;
-
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('الملف الشخصي'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('اسم المستخدم: ${user.username}'),
-                Text('البريد الإلكتروني: ${user.email}'),
-                Text('الدور: ${user.roleDisplayName}'),
-                Text(
-                  'تاريخ الإنشاء: ${user.createdAt.toString().split(' ')[0]}',
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إغلاق'),
-              ),
-            ],
-          ),
-    );
-  }
-
-  Future<void> _uploadQuestions() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('رفع الأسئلة'),
-            content: const Text(
-              'هل تريد رفع الأسئلة المحلية إلى Firebase؟\nهذه العملية قد تستغرق بعض الوقت.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('إلغاء'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('رفع'),
-              ),
-            ],
-          ),
-    );
-
-    if (confirm != true) return;
-
-    // عرض مؤشر التحميل
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder:
-          (context) => const AlertDialog(
-            content: Row(
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(width: 20),
-                Text('جاري رفع الأسئلة...'),
-              ],
-            ),
-          ),
-    );
-
-    try {
-      final success = await _firebaseService.uploadLocalQuestionsToFirebase();
-      Navigator.pop(context); // إغلاق مؤشر التحميل
-
-      if (success) {
-        _showSuccessSnackBar('تم رفع الأسئلة بنجاح');
-        await _loadData();
-      } else {
-        _showErrorSnackBar('فشل في رفع الأسئلة');
-      }
-    } catch (e) {
-      Navigator.pop(context); // إغلاق مؤشر التحميل
-      _showErrorSnackBar('خطأ في رفع الأسئلة: $e');
-    }
-  }
-
-  void _showAddQuestionDialog() {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AddQuestionDialog(
-            categories: _categories,
-            onQuestionAdded: () {
-              _loadData();
-              Navigator.of(context).pop();
-            },
-          ),
-    );
-  }
-
-  void _editQuestion(Question question) {
-    showDialog(
-      context: context,
-      builder:
-          (context) => EditQuestionDialog(
-            question: question,
-            categories: _categories,
-            onQuestionUpdated: () {
-              _loadData();
-              Navigator.of(context).pop();
-            },
-          ),
-    );
-  }
-
-  void _deleteQuestion(Question question) {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: Row(
-              children: [
-                Icon(Icons.warning, color: Colors.red),
-                const SizedBox(width: 8),
-                Text('تأكيد حذف السؤال'),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'هل أنت متأكد من حذف هذا السؤال؟',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: Text(
-                    question.questionText,
-                    style: const TextStyle(fontSize: 14),
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text('الفئة: ${question.category}'),
-                const SizedBox(height: 8),
-                const Text(
-                  'هذا الإجراء لا يمكن التراجع عنه.',
-                  style: TextStyle(
-                    color: Colors.red,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إلغاء'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _performDeleteQuestion(question);
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  foregroundColor: Colors.white,
-                ),
-                child: const Text('حذف السؤال'),
-              ),
-            ],
-          ),
-    );
-  }
-
-  Future<void> _performDeleteQuestion(Question question) async {
-    // عرض مؤشر التحميل
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder:
-          (context) => const AlertDialog(
-            content: Row(
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(width: 20),
-                Text('جاري حذف السؤال...'),
-              ],
-            ),
-          ),
-    );
-
-    try {
-      final success = await _firebaseService.deleteQuestion(question.id ?? '');
-      Navigator.pop(context); // إغلاق مؤشر التحميل
-
-      if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ تم حذف السؤال بنجاح'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        await _loadData(); // إعادة تحميل البيانات
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('❌ فشل في حذف السؤال'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      Navigator.pop(context); // إغلاق مؤشر التحميل
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('❌ خطأ في حذف السؤال: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
   }
 
   Widget _buildUsersManagementTab() {
@@ -2057,7 +1380,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   backgroundColor: Colors.red,
                   foregroundColor: Colors.white,
                 ),
-                child: const Text('حذف'),
+                child: const Text('حذف المستخدم'),
               ),
             ],
           ),
@@ -2264,7 +1587,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                                 color: Colors.green,
                               ),
                               onPressed: () => _restoreQuestion(question),
-                              tooltip: 'إستعادة السؤال',
+                              tooltip:
+                                  question['has_original_data'] == true
+                                      ? 'إستعادة السؤال (استعادة كاملة)'
+                                      : 'إستعادة السؤال (قد تفقد بعض البيانات)',
                             ),
                           ),
                         );
@@ -2360,7 +1686,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                                 color: Colors.green,
                               ),
                               onPressed: () => _restoreChallenge(challenge),
-                              tooltip: 'إستعادة التحدي',
+                              tooltip:
+                                  challenge['has_original_data'] == true
+                                      ? 'إستعادة التحدي (استعادة كاملة)'
+                                      : 'إستعادة التحدي (قد تفقد بعض البيانات)',
                             ),
                           ),
                         );
@@ -2396,18 +1725,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
       Navigator.pop(context); // إغلاق مؤشر التحميل
 
       if (success) {
+        // عرض رسالة نجاح بسيطة
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('✅ تم إستعادة السؤال بنجاح'),
+            content: Text('✅ تم استعادة السؤال وإضافته إلى الفئة الصحيحة'),
             backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
           ),
         );
         await _loadData(); // إعادة تحميل البيانات
       } else {
+        // عرض رسالة فشل بسيطة
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('❌ فشل في إستعادة السؤال'),
-            backgroundColor: Colors.red,
+            content: Text('⚠️ فشل في استعادة السؤال - قد يكون موجود مسبقاً'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
           ),
         );
       }
@@ -2441,24 +1774,117 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
 
     try {
       final success = await _firebaseService.restoreDeletedChallenge(
-        challenge['challenge'],
+        challenge['challenge_text'],
       );
       Navigator.pop(context); // إغلاق مؤشر التحميل
 
       if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ تم إستعادة التحدي بنجاح'),
-            backgroundColor: Colors.green,
-          ),
+        // عرض رسالة نجاح مفصلة
+        showDialog(
+          context: context,
+          builder:
+              (context) => AlertDialog(
+                title: Row(
+                  children: [
+                    Icon(Icons.check_circle, color: Colors.green),
+                    const SizedBox(width: 8),
+                    Text('تم استعادة التحدي بنجاح'),
+                  ],
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('✅ تم استعادة التحدي وإضافته إلى الفئة الصحيحة'),
+                    const SizedBox(height: 8),
+                    Text(
+                      '📂 يمكنك الآن العثور على التحدي في قائمة التحديات العادية',
+                    ),
+                    const SizedBox(height: 8),
+                    Text('🔄 قم بتحديث الصفحة لرؤية التغييرات'),
+                  ],
+                ),
+                actions: [
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('موافق'),
+                  ),
+                ],
+              ),
         );
         await _loadData(); // إعادة تحميل البيانات
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('❌ فشل في إستعادة التحدي'),
-            backgroundColor: Colors.red,
-          ),
+        // تحسين رسالة الفشل لتوضح الأسباب المحتملة
+        showDialog(
+          context: context,
+          builder:
+              (context) => AlertDialog(
+                title: Row(
+                  children: [
+                    Icon(Icons.warning, color: Colors.orange),
+                    const SizedBox(width: 8),
+                    Text('فشل في استعادة التحدي'),
+                  ],
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'لم يتم استعادة التحدي للأسباب التالية:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    Text('• التحدي موجود مسبقاً في قائمة التحديات العادية'),
+                    const SizedBox(height: 8),
+                    Text('• البيانات الأصلية للتحدي قد تكون تالفة أو مفقودة'),
+                    const SizedBox(height: 8),
+                    Text('• مشكلة في الاتصال بقاعدة البيانات'),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.blue.shade200),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '💡 اقتراحات الحل:',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue.shade800,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '• تحقق من تبويب "التحديات" للتأكد من عدم وجود التحدي',
+                          ),
+                          Text('• حاول إعادة المحاولة بعد تحديث الصفحة'),
+                          Text(
+                            '• إذا استمرت المشكلة، قم بحذف التحدي من المحذوفات',
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('إغلاق'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _loadData(); // إعادة تحميل البيانات للتحقق
+                    },
+                    child: const Text('تحديث البيانات'),
+                  ),
+                ],
+              ),
         );
       }
     } catch (e) {
@@ -2657,7 +2083,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
           (context) => AlertDialog(
             title: const Text('رفع التحديات'),
             content: const Text(
-              'هل تريد رفع التحديات المحلية إلى Firebase؟\nهذه العملية قد تستغرق بعض الوقت.',
+              'هل تريد رفع التحديات المحلية إلى Firebase？\nهذه العملية قد تستغرق بعض الوقت.',
             ),
             actions: [
               TextButton(
@@ -2691,18 +2117,483 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     );
 
     try {
-      final success = await _firebaseService.uploadLocalChallengesToFirebase();
+      final result = await _firebaseService.uploadLocalChallengesToFirebase();
       Navigator.pop(context); // إغلاق مؤشر التحميل
 
-      if (success) {
-        _showSuccessSnackBar('تم رفع التحديات بنجاح');
+      if (result) {
         await _loadData();
+        // عرض رسالة نجاح بسيطة
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ تم رفع التحديات الجديدة بنجاح'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
       } else {
-        _showErrorSnackBar('فشل في رفع التحديات');
+        // عرض رسالة فشل بسيطة
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('📋 لم يتم العثور على تحديات جديدة لرفعها'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
       }
     } catch (e) {
       Navigator.pop(context); // إغلاق مؤشر التحميل
-      _showErrorSnackBar('خطأ في رفع التحديات: $e');
+      // عرض رسالة خطأ بسيطة
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '❌ خطأ في رفع التحديات: ${e.toString().substring(0, 50)}...',
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'إعادة المحاولة',
+            textColor: Colors.white,
+            onPressed: () => _uploadChallenges(),
+          ),
+        ),
+      );
+    }
+  }
+
+  void _showUserProfile() {
+    final user = _authService.currentUser;
+    if (user == null) return;
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('الملف الشخصي'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('اسم المستخدم: ${user.username}'),
+                Text('البريد الإلكتروني: ${user.email}'),
+                Text('الدور: ${user.roleDisplayName}'),
+                Text(
+                  'تاريخ الإنشاء: ${user.createdAt.toString().split(' ')[0]}',
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('إغلاق'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  Widget _buildCategoriesManagement() {
+    return RefreshIndicator(
+      onRefresh: () async => _loadCategories(),
+      child: Column(
+        children: [
+          // شريط البحث والإجراءات
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => _showAddCategoryDialog(),
+                    icon: const Icon(Icons.add),
+                    label: const Text('إضافة فئة جديدة'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.deepPurple,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                IconButton(
+                  onPressed: () => _loadCategories(),
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'تحديث',
+                ),
+              ],
+            ),
+          ),
+
+          // قائمة الفئات
+          Expanded(
+            child:
+                _isLoadingCategories
+                    ? const Center(child: CircularProgressIndicator())
+                    : _categories.isEmpty
+                    ? const Center(
+                      child: Text(
+                        'لا توجد فئات متاحة',
+                        style: TextStyle(fontSize: 16, color: Colors.grey),
+                      ),
+                    )
+                    : ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _categories.length,
+                      itemBuilder: (context, index) {
+                        final category = _categories[index];
+                        return _buildCategoryCard(category);
+                      },
+                    ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategoryCard(Map<String, dynamic> category) {
+    final isCustom = category['is_custom'] as bool;
+    final questionsCount = category['questions_count'] as int;
+    final categoryName = category['name'] as String;
+    final description = category['description'] as String;
+    final iconName = category['icon'] as String;
+    final colorValue = category['color'] as int;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 2,
+      child: ExpansionTile(
+        leading: CircleAvatar(
+          backgroundColor: Color(colorValue).withOpacity(0.2),
+          child: Icon(_getIconData(iconName), color: Color(colorValue)),
+        ),
+        title: Text(
+          categoryName,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (description.isNotEmpty)
+              Text(
+                description,
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(Icons.quiz, size: 16, color: Colors.grey.shade600),
+                const SizedBox(width: 4),
+                Text(
+                  '$questionsCount سؤال',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color:
+                        isCustom
+                            ? Colors.orange.shade100
+                            : Colors.blue.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    isCustom ? 'مخصصة' : 'أساسية',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color:
+                          isCustom
+                              ? Colors.orange.shade800
+                              : Colors.blue.shade800,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                // أزرار الإجراءات
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () => _viewCategoryQuestions(categoryName),
+                      icon: const Icon(Icons.list, size: 16),
+                      label: const Text('عرض الأسئلة'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                      ),
+                    ),
+                    if (isCustom) ...[
+                      ElevatedButton.icon(
+                        onPressed: () => _showEditCategoryDialog(category),
+                        icon: const Icon(Icons.edit, size: 16),
+                        label: const Text('تعديل'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.orange,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                        ),
+                      ),
+                      ElevatedButton.icon(
+                        onPressed: () => _deleteCategoryConfirm(category),
+                        icon: const Icon(Icons.delete, size: 16),
+                        label: const Text('حذف'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _getIconData(String iconName) {
+    switch (iconName) {
+      case 'info':
+        return Icons.info;
+      case 'sports_soccer':
+        return Icons.sports_soccer;
+      case 'mosque':
+        return Icons.mosque;
+      case 'movie':
+        return Icons.movie;
+      case 'computer':
+        return Icons.computer;
+      case 'psychology':
+        return Icons.psychology;
+      case 'science':
+        return Icons.science;
+      case 'library_books':
+        return Icons.library_books;
+      case 'category':
+        return Icons.category;
+      default:
+        return Icons.help_outline;
+    }
+  }
+
+  void _showAddCategoryDialog() {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AddCategoryDialog(
+            onCategoryAdded: () {
+              _loadCategories();
+              Navigator.of(context).pop();
+            },
+          ),
+    );
+  }
+
+  void _showEditCategoryDialog(Map<String, dynamic> category) {
+    showDialog(
+      context: context,
+      builder:
+          (context) => EditCategoryDialog(
+            category: category,
+            onCategoryUpdated: () {
+              _loadCategories();
+              Navigator.of(context).pop();
+            },
+          ),
+    );
+  }
+
+  void _deleteCategoryConfirm(Map<String, dynamic> category) {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('تأكيد الحذف'),
+            content: Text(
+              'هل أنت متأكد من حذف فئة "${category['name']}"؟\n\nسيتم نقل جميع الأسئلة في هذه الفئة إلى فئة "معلومات عامة".',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('إلغاء'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  Navigator.of(context).pop();
+                  await _deleteCategory(category['id']);
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                child: const Text('حذف', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+    );
+  }
+
+  Future<void> _deleteCategory(String categoryId) async {
+    try {
+      final success = await _firebaseService.deleteCustomCategory(categoryId);
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ تم حذف الفئة بنجاح'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _loadCategories();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ فشل في حذف الفئة'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ خطأ في حذف الفئة: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _viewCategoryQuestions(String categoryName) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (context) => CategoryQuestionsScreen(
+              categoryName: categoryName,
+              onRefresh: _loadData,
+              categories: _categories,
+            ),
+      ),
+    );
+  }
+
+  void _showAddQuestionDialog() {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AddQuestionDialog(
+            categories: _categories,
+            onQuestionAdded: () {
+              _loadData();
+              Navigator.of(context).pop();
+            },
+          ),
+    );
+  }
+
+  Future<void> _uploadQuestions() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('رفع الأسئلة'),
+            content: const Text(
+              'هل تريد رفع الأسئلة المحلية إلى Firebase؟\nهذه العملية قد تستغرق بعض الوقت.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('إلغاء'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('رفع'),
+              ),
+            ],
+          ),
+    );
+
+    if (confirm != true) return;
+
+    // عرض مؤشر التحميل
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (context) => const AlertDialog(
+            content: Row(
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 20),
+                Text('جاري رفع الأسئلة...'),
+              ],
+            ),
+          ),
+    );
+
+    try {
+      final result = await _firebaseService.uploadLocalQuestionsToFirebase();
+      Navigator.pop(context); // إغلاق مؤشر التحميل
+
+      if (result) {
+        await _loadData();
+        // عرض رسالة نجاح بسيطة
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ تم رفع الأسئلة الجديدة بنجاح'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      } else {
+        // عرض رسالة فشل بسيطة
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('📋 لم يتم العثور على أسئلة جديدة لرفعها'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      Navigator.pop(context); // إغلاق مؤشر التحميل
+      // عرض رسالة خطأ بسيطة
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '❌ خطأ في رفع الأسئلة: ${e.toString().substring(0, 50)}...',
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'إعادة المحاولة',
+            textColor: Colors.white,
+            onPressed: () => _uploadQuestions(),
+          ),
+        ),
+      );
     }
   }
 }

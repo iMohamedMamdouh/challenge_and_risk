@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/audio_service.dart';
 import '../services/auth_service.dart';
@@ -15,9 +16,25 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+class _HomeScreenState extends State<HomeScreen>
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   final AudioService _audioService = AudioService();
   final AuthService _authService = AuthService();
+
+  // Animation controllers
+  late AnimationController _logoController;
+  late AnimationController _titleController;
+  late AnimationController _cardsController;
+  late AnimationController _tipController;
+  late AnimationController _pulseController;
+
+  // Animations
+  late Animation<double> _logoAnimation;
+  late Animation<double> _titleAnimation;
+  late Animation<Offset> _cardsSlideAnimation;
+  late Animation<double> _cardsFadeAnimation;
+  late Animation<double> _tipAnimation;
+  late Animation<double> _pulseAnimation;
 
   @override
   void initState() {
@@ -25,12 +42,106 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _audioService.addListener(_onAudioStateChanged);
     _initializeAudio();
+    _initializeAnimations();
+  }
+
+  void _initializeAnimations() {
+    // Logo animation controller
+    _logoController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    );
+
+    // Title animation controller
+    _titleController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    );
+
+    // Cards animation controller
+    _cardsController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+
+    // Tip animation controller
+    _tipController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+
+    // Pulse animation controller (continuous)
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 2000),
+      vsync: this,
+    );
+
+    // Define animations
+    _logoAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _logoController, curve: Curves.elasticOut),
+    );
+
+    _titleAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _titleController, curve: Curves.easeOutBack),
+    );
+
+    _cardsSlideAnimation = Tween<Offset>(
+      begin: const Offset(0, 0.5),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(parent: _cardsController, curve: Curves.easeOutCubic),
+    );
+
+    _cardsFadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _cardsController, curve: Curves.easeOut));
+
+    _tipAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _tipController, curve: Curves.easeOut));
+
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.1).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    // Start animations with delays
+    _startAnimations();
+  }
+
+  void _startAnimations() {
+    // Start logo animation immediately
+    _logoController.forward();
+
+    // Start title animation after logo
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) _titleController.forward();
+    });
+
+    // Start cards animation after title
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) _cardsController.forward();
+    });
+
+    // Start tip animation after cards
+    Future.delayed(const Duration(milliseconds: 1500), () {
+      if (mounted) _tipController.forward();
+    });
+
+    // Start continuous pulse animation
+    _pulseController.repeat(reverse: true);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _audioService.removeListener(_onAudioStateChanged);
+    _logoController.dispose();
+    _titleController.dispose();
+    _cardsController.dispose();
+    _tipController.dispose();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -304,112 +415,156 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           children: [
             const SizedBox(height: 20),
 
-            // App logo/icon
-            Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.deepPurple.withOpacity(0.3),
-                    spreadRadius: 5,
-                    blurRadius: 15,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
-              ),
-              child: ClipOval(
-                child: Image.asset(
-                  'assets/images/logo.png',
-                  width: 140,
-                  height: 140,
-                  fit: BoxFit.cover,
-                ),
+            // App logo/icon with animation
+            ScaleTransition(
+              scale: _logoAnimation,
+              child: AnimatedBuilder(
+                animation: _pulseAnimation,
+                builder: (context, child) {
+                  return Transform.scale(
+                    scale: _pulseAnimation.value,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.deepPurple.withOpacity(0.3),
+                            spreadRadius: 5,
+                            blurRadius: 15,
+                            offset: const Offset(0, 5),
+                          ),
+                        ],
+                      ),
+                      child: ClipOval(
+                        child: Image.asset(
+                          'assets/images/logo.png',
+                          width: 140,
+                          height: 140,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
 
             const SizedBox(height: 30),
 
-            // Welcome text
-            const Text(
-              'مرحباً بك في لعبة التحدي والمخاطرة!',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Colors.deepPurple,
+            // Welcome text with animation
+            ScaleTransition(
+              scale: _titleAnimation,
+              child: const Text(
+                'مرحباً بك في لعبة التحدي والمخاطرة!',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.deepPurple,
+                ),
               ),
             ),
 
             const SizedBox(height: 10),
 
-            const Text(
-              'اختر نمط اللعبة المفضل لديك',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, color: Colors.grey),
+            FadeTransition(
+              opacity: _titleAnimation,
+              child: const Text(
+                'اختر نمط اللعبة المفضل لديك',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
             ),
 
             const SizedBox(height: 25),
 
-            // Online mode button
-            _buildGameModeCard(
-              context: context,
-              title: 'لعب أونلاين',
-              subtitle: 'العب مع الأصدقاء من خلال كود الغرفة',
-              icon: Icons.wifi,
-              color: Colors.green,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const OnlineHomeScreen(),
-                  ),
-                );
-              },
+            // Online mode button with animation
+            SlideTransition(
+              position: _cardsSlideAnimation,
+              child: FadeTransition(
+                opacity: _cardsFadeAnimation,
+                child: _buildGameModeCard(
+                  context: context,
+                  title: 'لعب أونلاين',
+                  subtitle: 'العب مع الأصدقاء من خلال كود الغرفة',
+                  icon: Icons.wifi,
+                  color: Colors.green,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const OnlineHomeScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ),
             ),
 
             const SizedBox(height: 20),
 
-            // Local mode button
-            _buildGameModeCard(
-              context: context,
-              title: 'لعب محلي',
-              subtitle: 'العب مع الأصدقاء على نفس الجهاز',
-              icon: Icons.people,
-              color: Colors.blue,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const LocalSettingsScreen(),
-                  ),
-                );
-              },
+            // Local mode button with animation
+            SlideTransition(
+              position: _cardsSlideAnimation,
+              child: FadeTransition(
+                opacity: _cardsFadeAnimation,
+                child: _buildGameModeCard(
+                  context: context,
+                  title: 'لعب محلي',
+                  subtitle: 'العب مع الأصدقاء على نفس الجهاز',
+                  icon: Icons.people,
+                  color: Colors.blue,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const LocalSettingsScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ),
             ),
 
             const SizedBox(height: 40),
 
-            Container(
-              padding: const EdgeInsets.all(15),
-              decoration: BoxDecoration(
-                color: Colors.amber.shade50,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.amber.shade200, width: 1),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.lightbulb, color: Colors.amber, size: 24),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'نصيحة: اللعب الأونلاين يتيح لك اللعب مع أصدقائك من أي مكان!',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.amber,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
+            // Tip container with animation
+            FadeTransition(
+              opacity: _tipAnimation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.3),
+                  end: Offset.zero,
+                ).animate(
+                  CurvedAnimation(
+                    parent: _tipController,
+                    curve: Curves.easeOutCubic,
                   ),
-                ],
+                ),
+                child: Container(
+                  padding: const EdgeInsets.all(15),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.amber.shade200, width: 1),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.lightbulb, color: Colors.amber, size: 24),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'نصيحة: اللعب الأونلاين يتيح لك اللعب مع أصدقائك من أي مكان!',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.amber,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
 
@@ -429,60 +584,133 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required Color color,
     required VoidCallback onTap,
   }) {
-    return SizedBox(
-      width: double.infinity,
-      child: Card(
-        elevation: 8,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(15),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(15),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(icon, size: 30, color: color),
+    return StatefulBuilder(
+      builder: (context, setState) {
+        bool isHovered = false;
+
+        return MouseRegion(
+          onEnter: (_) => setState(() => isHovered = true),
+          onExit: (_) => setState(() => isHovered = false),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            transform: Matrix4.identity()..scale(isHovered ? 1.02 : 1.0),
+            child: SizedBox(
+              width: double.infinity,
+              child: Card(
+                elevation: isHovered ? 12 : 8,
+                shadowColor: color.withOpacity(isHovered ? 0.4 : 0.2),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15),
                 ),
-                const SizedBox(width: 20),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.deepPurple,
+                child: InkWell(
+                  onTap: () {
+                    // Add tap animation
+                    HapticFeedback.lightImpact();
+                    onTap();
+                  },
+                  borderRadius: BorderRadius.circular(15),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(15),
+                      gradient:
+                          isHovered
+                              ? LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  color.withOpacity(0.1),
+                                  color.withOpacity(0.05),
+                                ],
+                              )
+                              : null,
+                    ),
+                    child: Row(
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.all(15),
+                          decoration: BoxDecoration(
+                            color:
+                                isHovered
+                                    ? color.withOpacity(0.2)
+                                    : color.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow:
+                                isHovered
+                                    ? [
+                                      BoxShadow(
+                                        color: color.withOpacity(0.3),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ]
+                                    : null,
+                          ),
+                          child: AnimatedScale(
+                            scale: isHovered ? 1.1 : 1.0,
+                            duration: const Duration(milliseconds: 200),
+                            child: Icon(
+                              icon,
+                              size: 30,
+                              color: isHovered ? color.withOpacity(0.8) : color,
+                            ),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 5),
-                      Text(
-                        subtitle,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey.shade600,
+                        const SizedBox(width: 20),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              AnimatedDefaultTextStyle(
+                                duration: const Duration(milliseconds: 200),
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color:
+                                      isHovered
+                                          ? color.withOpacity(0.8)
+                                          : Colors.deepPurple,
+                                ),
+                                child: Text(title),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                subtitle,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color:
+                                      isHovered
+                                          ? color.withOpacity(0.7)
+                                          : Colors.grey.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          transform: Matrix4.translationValues(
+                            isHovered ? 5.0 : 0.0,
+                            0.0,
+                            0.0,
+                          ),
+                          child: Icon(
+                            Icons.arrow_forward_ios,
+                            color: isHovered ? color : Colors.grey.shade400,
+                            size: 20,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                Icon(
-                  Icons.arrow_forward_ios,
-                  color: Colors.grey.shade400,
-                  size: 20,
-                ),
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
